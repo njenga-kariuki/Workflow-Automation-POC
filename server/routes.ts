@@ -44,6 +44,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ status: "healthy" });
   });
 
+  // Chunk upload endpoint
+  app.post("/api/upload/chunk", async (req: Request, res: Response) => {
+    try {
+      // Create a buffer parser for multipart/form-data
+      const busboy = require('busboy')({ headers: req.headers });
+      let fileData: Buffer | null = null;
+      let index = -1;
+      let totalChunks = -1;
+      let filename = '';
+      let originalFilename = '';
+      let title = '';
+      
+      // Handle file parts
+      busboy.on('file', (_fieldname: string, file: any, info: any) => {
+        const chunks: Buffer[] = [];
+        file.on('data', (chunk: Buffer) => {
+          chunks.push(chunk);
+        });
+        file.on('end', () => {
+          fileData = Buffer.concat(chunks);
+          originalFilename = info.filename;
+        });
+      });
+      
+      // Handle form fields
+      busboy.on('field', (fieldname: string, val: string) => {
+        if (fieldname === 'index') index = parseInt(val, 10);
+        else if (fieldname === 'totalChunks') totalChunks = parseInt(val, 10);
+        else if (fieldname === 'filename') filename = val;
+        else if (fieldname === 'title') title = val;
+      });
+      
+      // Handle parsing complete
+      busboy.on('finish', async () => {
+        // Validate inputs
+        if (index === -1 || totalChunks === -1 || !filename || !fileData) {
+          return res.status(400).json({ 
+            message: 'Missing required parameters for chunk upload'
+          });
+        }
+        
+        // Process the chunk
+        const result = await chunkUploadService.saveChunk({
+          index,
+          totalChunks,
+          data: fileData,
+          filename,
+          originalFilename,
+          title: title || originalFilename || 'Untitled',
+          userId: 1, // Default user ID
+        });
+        
+        res.json(result);
+      });
+      
+      // Pipe the request to busboy
+      req.pipe(busboy);
+    } catch (error) {
+      console.error('Error processing chunk upload:', error);
+      res.status(500).json({ 
+        message: error instanceof Error ? error.message : 'Unknown error during chunk upload' 
+      });
+    }
+  });
+
   // Upload video endpoint
   app.post(
     "/api/upload",
