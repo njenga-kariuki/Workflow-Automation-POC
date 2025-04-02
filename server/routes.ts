@@ -129,39 +129,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // 5. Define Presigned URL options
         const options = {
-          version: 'v4' as const, // Ensure 'v4' is treated as a literal type
-          action: 'write' as const, // Ensure 'write' is treated as a literal type
+          version: 'v4' as const,
+          action: 'resumable' as const, // Changed from 'write' to 'resumable'
           expires: Date.now() + 15 * 60 * 1000, // 15 minutes
-          contentType: contentType, // Set content type for the upload
+          // contentType is not needed for resumable initiation URL
+          // It will be specified by the client in the POST to the resumable URL
         };
 
-        // 6. Generate the Presigned URL
-        console.log(`Generating V4 presigned URL for: ${gcsPath} with contentType: ${contentType}`);
-        const [uploadUrl] = await storageClient
+        // 6. Generate the Presigned URL for initiating the resumable upload
+        console.log(`Generating V4 presigned URL for RESUMABLE upload: ${gcsPath}`);
+        const [initiateResumableUrl] = await storageClient
           .bucket(gcsBucketName)
           .file(gcsObjectName)
           .getSignedUrl(options);
           
-        console.log(`Successfully generated V4 presigned URL.`);
+        console.log(`Successfully generated V4 presigned URL for RESUMABLE initiation.`);
 
         // 7. Return URL and GCS Path to client
-        // The client will use 'uploadUrl' to PUT the file.
-        // 'gcsPath' can be stored by the client and sent later
-        // to another endpoint (e.g., /api/workflow/create) to create the workflow record.
+        // Client will POST to 'initiateResumableUrl' to get the session URI,
+        // then PUT the file to the session URI.
         res.status(200).json({
-          uploadUrl: uploadUrl,
+          // Rename field for clarity
+          initiateResumableUploadUrl: initiateResumableUrl, 
           gcsPath: gcsPath,
-          // Optionally, create a preliminary workflow record here if desired,
-          // or have the client call another endpoint after successful upload.
-          // For now, just returning the URL.
-          // Example of creating workflow record (requires title, userId):
-          // const preliminaryWorkflow = await storage.createWorkflow({
-          //   userId: 1, // Get actual user ID from request context
-          //   title: title || 'Untitled Upload',
-          //   videoPath: gcsPath, // Store GCS path instead of local path
-          //   status: 'uploading', // Indicate it's not ready yet
-          // });
-          // workflowId: preliminaryWorkflow.id // Return ID if created
         });
 
       } catch (error) {

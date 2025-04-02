@@ -115,7 +115,7 @@ export const FileUpload = () => {
     setUploadProgress(0);
     setUploadStatusMessage('Initiating upload...');
     
-    let uploadUrl = '';
+    let initiateResumableUploadUrl = '';
     let gcsPath = '';
     const title = file.name.replace(/\.mov$/i, '');
 
@@ -138,25 +138,50 @@ export const FileUpload = () => {
       }
 
       const initiateData = await initiateResponse.json();
-      uploadUrl = initiateData.uploadUrl;
+      initiateResumableUploadUrl = initiateData.initiateResumableUploadUrl;
       gcsPath = initiateData.gcsPath;
       
-      if (!uploadUrl || !gcsPath) {
-          throw new Error('Server did not return a valid upload URL or GCS path.');
+      if (!initiateResumableUploadUrl || !gcsPath) {
+          throw new Error('Server did not return a valid resumable upload URL or GCS path.');
       }
 
+      setUploadProgress(20);
+      setUploadStatusMessage('Starting upload session...');
+      
+      const getSessionResponse = await fetch(initiateResumableUploadUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Length': '0',
+          'X-Upload-Content-Type': file.type || 'video/quicktime',
+          'X-Upload-Content-Length': file.size.toString(),
+          'Origin': window.location.origin
+        },
+      });
+
+      if (!getSessionResponse.ok || getSessionResponse.status !== 201) {
+          const errorText = await getSessionResponse.text();
+          throw new Error(`Failed to initiate GCS resumable session: ${getSessionResponse.status} ${getSessionResponse.statusText} - ${errorText}`);
+      }
+
+      const sessionUri = getSessionResponse.headers.get('Location');
+      if (!sessionUri) {
+          throw new Error('GCS did not return a session URI (Location header) for resumable upload.');
+      }
+      
       setUploadProgress(30);
       setUploadStatusMessage('Uploading to storage...');
       
-      const gcsUploadResponse = await fetch(uploadUrl, {
+      const gcsUploadResponse = await fetch(sessionUri, {
         method: 'PUT',
-        headers: { 'Content-Type': file.type || 'video/quicktime' },
+        headers: {
+            'Origin': window.location.origin 
+        },
         body: file,
       });
 
       if (!gcsUploadResponse.ok) {
         const errorText = await gcsUploadResponse.text();
-        throw new Error(`GCS upload failed: ${errorText || gcsUploadResponse.statusText}`);
+        throw new Error(`GCS upload failed: ${gcsUploadResponse.status} ${gcsUploadResponse.statusText} - ${errorText}`);
       }
       
       setUploadProgress(70);
