@@ -3,8 +3,10 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
+// Increase payload size limits
 app.use(express.json({ limit: '300mb' }));
-app.use(express.urlencoded({ extended: false, limit: '300mb' }));
+app.use(express.urlencoded({ extended: true, limit: '300mb' }));
+app.use(express.raw({ limit: '300mb' }));
 
 app.use((req, res, next) => {
   const start = Date.now();
