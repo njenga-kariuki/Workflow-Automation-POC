@@ -1,6 +1,85 @@
-import { useState, useRef, useEffect } from "react";
-import { Block as BlockComponent } from "./Block";
-import { Block, Connection } from "@shared/schema";
+import { useCallback, useEffect } from "react";
+import ReactFlow, {
+  Node,
+  Edge,
+  Controls,
+  MiniMap,
+  ReactFlowProvider,
+  useNodesState,
+  useEdgesState,
+  NodeTypes,
+  MarkerType,
+  Panel,
+  NodeMouseHandler,
+  NodeProps,
+  Background
+} from "reactflow";
+import "reactflow/dist/style.css";
+import { Block, BlockType, Connection } from "@shared/schema";
+import { cn } from "@/lib/utils";
+import { FileText, Database, Presentation, Layout } from "lucide-react";
+
+// Define custom node component
+const CustomBlockNode = ({ data }: NodeProps<Block>) => {
+  const getBlockStyles = () => {
+    switch (data.type) {
+      case BlockType.Document:
+        return {
+          bg: "bg-gray-50",
+          border: "border-gray-300",
+          icon: <FileText className="h-4 w-4 text-green-600" />,
+          iconBg: "bg-green-100"
+        };
+      case BlockType.Data:
+        return {
+          bg: "bg-blue-50",
+          border: "border-blue-200",
+          icon: <Database className="h-4 w-4 text-blue-600" />,
+          iconBg: "bg-blue-100"
+        };
+      case BlockType.Presentation:
+        return {
+          bg: "bg-purple-50",
+          border: "border-purple-200",
+          icon: <Presentation className="h-4 w-4 text-purple-600" />,
+          iconBg: "bg-purple-100"
+        };
+      case BlockType.Interface:
+        return {
+          bg: "bg-yellow-50",
+          border: "border-yellow-200",
+          icon: <Layout className="h-4 w-4 text-yellow-600" />,
+          iconBg: "bg-yellow-100"
+        };
+      default:
+        return {
+          bg: "bg-gray-50",
+          border: "border-gray-300",
+          icon: <FileText className="h-4 w-4 text-gray-600" />,
+          iconBg: "bg-gray-100"
+        };
+    }
+  };
+  
+  const styles = getBlockStyles();
+  
+  return (
+    <div className={cn(
+      styles.bg, 
+      styles.border, 
+      "border rounded-lg p-4 w-64 shadow-sm"
+    )}>
+      <div className="flex items-center mb-2">
+        <div className={`h-6 w-6 rounded-full ${styles.iconBg} flex items-center justify-center`}>
+          {styles.icon}
+        </div>
+        <h3 className="ml-2 font-medium text-gray-900">{data.title}</h3>
+      </div>
+      
+      <p className="text-sm text-gray-500">{data.description}</p>
+    </div>
+  );
+};
 
 interface WorkflowCanvasProps {
   blocks: Block[];
@@ -9,14 +88,10 @@ interface WorkflowCanvasProps {
   selectedBlockId: string | null;
 }
 
-interface Position {
-  x: number;
-  y: number;
-}
-
-interface BlockPosition {
-  [blockId: string]: Position;
-}
+// Define the node types for React Flow
+const nodeTypes: NodeTypes = {
+  blockNode: CustomBlockNode,
+};
 
 export const WorkflowCanvas = ({ 
   blocks, 
@@ -24,205 +99,116 @@ export const WorkflowCanvas = ({
   onSelectBlock,
   selectedBlockId
 }: WorkflowCanvasProps) => {
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const [blockPositions, setBlockPositions] = useState<BlockPosition>({});
-  const [scale, setScale] = useState<number>(1);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [dragStart, setDragStart] = useState<Position>({ x: 0, y: 0 });
-  const [offset, setOffset] = useState<Position>({ x: 0, y: 0 });
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   
-  // Initialize block positions
-  useEffect(() => {
-    if (blocks.length && Object.keys(blockPositions).length === 0) {
-      const positions: BlockPosition = {};
+  // Convert our Block objects to React Flow Nodes
+  const createNodes = useCallback(() => {
+    if (!blocks || blocks.length === 0) return [];
+    
+    // Create a grid layout for initial node positions
+    const gridSize = Math.ceil(Math.sqrt(blocks.length));
+    const cellWidth = 300;
+    const cellHeight = 200;
+    
+    return blocks.map((block, index) => {
+      const row = Math.floor(index / gridSize);
+      const col = index % gridSize;
       
-      // Simple automatic layout algorithm
-      // Place blocks in a grid layout
-      const gridSize = Math.ceil(Math.sqrt(blocks.length));
-      const cellWidth = 300;
-      const cellHeight = 150;
-      
-      blocks.forEach((block, index) => {
-        const row = Math.floor(index / gridSize);
-        const col = index % gridSize;
-        
-        positions[block.id] = {
-          x: 50 + col * cellWidth,
-          y: 50 + row * cellHeight
-        };
-      });
-      
-      setBlockPositions(positions);
-    }
-  }, [blocks]);
-  
-  const handleZoomIn = () => {
-    setScale(prevScale => Math.min(prevScale + 0.1, 2));
-  };
-  
-  const handleZoomOut = () => {
-    setScale(prevScale => Math.max(prevScale - 0.1, 0.5));
-  };
-  
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.target === canvasRef.current) {
-      setIsDragging(true);
-      setDragStart({ x: e.clientX, y: e.clientY });
-    }
-  };
-  
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging) {
-      const dx = e.clientX - dragStart.x;
-      const dy = e.clientY - dragStart.y;
-      
-      setOffset(prev => ({
-        x: prev.x + dx,
-        y: prev.y + dy
-      }));
-      
-      setDragStart({ x: e.clientX, y: e.clientY });
-    }
-  };
-  
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-  
-  // Draw connection arrows between blocks
-  const renderConnections = () => {
-    return connections.map((connection, index) => {
-      const sourcePos = blockPositions[connection.sourceBlockId];
-      const targetPos = blockPositions[connection.targetBlockId];
-      
-      if (!sourcePos || !targetPos) {
-        return null;
-      }
-      
-      // Calculate arrow points
-      const sourceX = sourcePos.x + 140; // center of source block
-      const sourceY = sourcePos.y + 40;
-      const targetX = targetPos.x + 40;
-      const targetY = targetPos.y + 40;
-      
-      // Draw a curved line
-      const path = `M${sourceX},${sourceY} C${sourceX + 50},${sourceY} ${targetX - 50},${targetY} ${targetX},${targetY}`;
-      
-      return (
-        <svg 
-          key={`connection-${index}`}
-          className="absolute top-0 left-0 w-full h-full pointer-events-none"
-          style={{ zIndex: 0 }}
-        >
-          <path 
-            d={path} 
-            stroke="#9CA3AF" 
-            strokeWidth="2" 
-            fill="none" 
-            strokeDasharray="4 4"
-          />
-          <path 
-            d={`M${targetX-5},${targetY-5} L${targetX},${targetY} L${targetX-5},${targetY+5}`}
-            stroke="#9CA3AF" 
-            strokeWidth="2" 
-            fill="none"
-          />
-        </svg>
-      );
+      return {
+        id: block.id,
+        type: 'blockNode',
+        data: block,
+        position: { x: 50 + col * cellWidth, y: 50 + row * cellHeight },
+        selected: block.id === selectedBlockId,
+      };
     });
-  };
+  }, [blocks, selectedBlockId]);
+  
+  // Convert our Connection objects to React Flow Edges
+  const createEdges = useCallback(() => {
+    if (!connections || connections.length === 0) return [];
+    
+    return connections.map((connection) => {
+      return {
+        id: `edge-${connection.sourceBlockId}-${connection.targetBlockId}`,
+        source: connection.sourceBlockId,
+        target: connection.targetBlockId,
+        label: connection.dataType,
+        type: 'smoothstep',
+        animated: connection.updateRules === 'onSourceChange',
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 15,
+          height: 15,
+        },
+        style: { strokeWidth: 2 },
+      };
+    });
+  }, [connections]);
+  
+  // Update nodes and edges when blocks or connections change
+  useEffect(() => {
+    setNodes(createNodes());
+    setEdges(createEdges());
+  }, [blocks, connections, selectedBlockId, createNodes, createEdges, setNodes, setEdges]);
+  
+  // Handle node selection
+  const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
+    onSelectBlock(node.id);
+  }, [onSelectBlock]);
   
   return (
-    <div className="relative h-full overflow-hidden bg-white">
-      {/* Toolbar */}
-      <div className="absolute top-4 right-4 z-10 flex space-x-2">
-        <button 
-          className="p-1 rounded-md hover:bg-gray-100"
-          onClick={handleZoomIn}
+    <ReactFlowProvider>
+      <div className="h-full w-full">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={onNodeClick}
+          nodeTypes={nodeTypes}
+          fitView
+          elementsSelectable={true}
+          attributionPosition="bottom-right"
         >
-          <svg className="h-5 w-5 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-          </svg>
-        </button>
-        <button 
-          className="p-1 rounded-md hover:bg-gray-100"
-          onClick={handleZoomOut}
-        >
-          <svg className="h-5 w-5 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 12H4" />
-          </svg>
-        </button>
-      </div>
-      
-      {/* Canvas */}
-      <div 
-        ref={canvasRef}
-        className="w-full h-full cursor-grab overflow-auto"
-        style={{
-          transform: `scale(${scale})`,
-          transformOrigin: 'center',
-          transition: 'transform 0.2s'
-        }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-      >
-        <div 
-          className="relative w-[2000px] h-[1000px]"
-          style={{
-            transform: `translate(${offset.x}px, ${offset.y}px)`,
-          }}
-        >
-          {/* Connection lines */}
-          {renderConnections()}
-          
-          {/* Blocks */}
-          {blocks.map((block) => (
-            <BlockComponent
-              key={block.id}
-              block={block}
-              position={blockPositions[block.id] || { x: 0, y: 0 }}
-              selected={block.id === selectedBlockId}
-              onSelect={onSelectBlock}
-            />
-          ))}
-        </div>
-      </div>
-      
-      {/* Minimap (simplified) */}
-      <div className="absolute bottom-4 right-4 w-40 h-40 border border-gray-200 rounded bg-white/90 shadow-sm overflow-hidden">
-        <div className="w-full h-full relative">
-          {blocks.map((block) => {
-            const pos = blockPositions[block.id];
-            if (!pos) return null;
-            
-            return (
-              <div
-                key={`minimap-${block.id}`}
-                className="absolute w-4 h-4 rounded-sm bg-primary opacity-70"
-                style={{
-                  left: (pos.x / 2000) * 100 + '%',
-                  top: (pos.y / 1000) * 100 + '%',
-                  transform: 'translate(-50%, -50%)'
-                }}
-              />
-            );
-          })}
-          
-          {/* Viewport indicator */}
-          <div 
-            className="absolute border-2 border-primary rounded opacity-50"
-            style={{
-              left: `${Math.max(0, 50 - ((window.innerWidth / 2) / 20))}%`,
-              top: `${Math.max(0, 50 - ((window.innerHeight / 2) / 10))}%`,
-              width: `${Math.min(100, (window.innerWidth / 20))}%`,
-              height: `${Math.min(100, (window.innerHeight / 10))}%`,
-              transform: `translate(${-offset.x / 20}%, ${-offset.y / 10}%)`
+          <Controls />
+          <MiniMap 
+            nodeColor={(node) => {
+              const block = node.data as Block;
+              switch (block.type) {
+                case BlockType.Document: return '#10B981';
+                case BlockType.Data: return '#3B82F6';
+                case BlockType.Presentation: return '#8B5CF6';
+                case BlockType.Interface: return '#F59E0B';
+                default: return '#9CA3AF';
+              }
             }}
+            maskColor="rgba(240, 242, 245, 0.7)"
           />
-        </div>
+          <Background color="#f8f8f8" gap={12} size={1} />
+          <Panel position="top-right" className="bg-white p-2 rounded shadow">
+            <div className="text-xs text-gray-500">
+              <div className="flex items-center mb-1">
+                <div className="w-3 h-3 bg-green-500 rounded-full mr-2"></div>
+                <span>Document Blocks</span>
+              </div>
+              <div className="flex items-center mb-1">
+                <div className="w-3 h-3 bg-blue-500 rounded-full mr-2"></div>
+                <span>Data Blocks</span>
+              </div>
+              <div className="flex items-center mb-1">
+                <div className="w-3 h-3 bg-purple-500 rounded-full mr-2"></div>
+                <span>Presentation Blocks</span>
+              </div>
+              <div className="flex items-center">
+                <div className="w-3 h-3 bg-yellow-500 rounded-full mr-2"></div>
+                <span>Interface Blocks</span>
+              </div>
+            </div>
+          </Panel>
+        </ReactFlow>
       </div>
-    </div>
+    </ReactFlowProvider>
   );
 };
