@@ -278,7 +278,7 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
               </div>
               <div className="ml-3 w-full">
                 <div className="flex justify-between">
-                  <h3 className="text-sm font-medium text-gray-900">Claude 3.5 Organization</h3>
+                  <h3 className="text-sm font-medium text-gray-900">Claude 3.7 Organization</h3>
                   <span className="text-sm font-medium text-gray-500">{status?.progress.organization || 0}%</span>
                 </div>
                 <div className="mt-1.5 w-full bg-gray-200 rounded-full h-2">
@@ -317,7 +317,7 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
               </div>
               <div className="ml-3 w-full">
                 <div className="flex justify-between">
-                  <h3 className="text-sm font-medium text-gray-900">Claude 3.5 Block Structure Generation</h3>
+                  <h3 className="text-sm font-medium text-gray-900">Claude 3.7 Block Structure Generation</h3>
                   <span className="text-sm font-medium text-gray-500">{status?.progress.blockGeneration || 0}%</span>
                 </div>
                 <div className="mt-1.5 w-full bg-gray-200 rounded-full h-2">

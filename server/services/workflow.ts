@@ -29,17 +29,17 @@ export class WorkflowService {
       const processedVideoPath = await videoProcessor.preprocessVideo(workflow.videoPath);
       const framePaths = await videoProcessor.extractFrames(processedVideoPath);
       
-      // Step 2: Raw workflow extraction using Gemini
+      // Step 2: Raw workflow extraction using Gemini 2.0 Flash
       console.log(`Starting raw extraction for workflow ${workflowId}`);
       const rawExtraction = await aiService.extractRawWorkflow(processedVideoPath, framePaths);
       await storage.updateWorkflowRawExtraction(workflowId, rawExtraction);
       
-      // Step 3: Workflow organization using Claude
+      // Step 3: Workflow organization using Claude 3.7 Sonnet
       console.log(`Starting workflow organization for workflow ${workflowId}`);
       const organizedWorkflow = await aiService.organizeWorkflow(rawExtraction);
       await storage.updateWorkflowOrganizedData(workflowId, organizedWorkflow);
       
-      // Step 4: Block structure generation using Claude
+      // Step 4: Block structure generation using Claude 3.7 Sonnet
       console.log(`Starting block structure generation for workflow ${workflowId}`);
       const blockStructure = await aiService.generateBlockStructure(organizedWorkflow);
       await storage.updateWorkflowBlockStructure(workflowId, blockStructure);
