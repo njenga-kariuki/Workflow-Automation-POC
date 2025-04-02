@@ -19,6 +19,15 @@ app.use((req, res, next) => {
 
   res.on("finish", () => {
     const duration = Date.now() - start;
+    
+    // Define the path pattern to skip
+    const statusPathRegex = /\/api\/workflow\/\d+\/status/;
+    
+    // Skip logging for successful, unmodified status polls
+    if (req.method === 'GET' && statusPathRegex.test(path) && res.statusCode === 304) {
+        return; // Don't log this request
+    }
+    
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {

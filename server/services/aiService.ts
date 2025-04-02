@@ -2,6 +2,7 @@ import { BlockStructure, BlockType, SourceType, UpdateRule } from '@shared/schem
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import { SpeechClient } from '@google-cloud/speech';
+import { Storage } from '@google-cloud/storage';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -40,12 +41,40 @@ export class AIService {
   private anthropicClient: Anthropic;
   private geminiClient: GoogleGenerativeAI;
   private speechClient: SpeechClient;
+  private storageClient: Storage;
   private anthropicAPIKey: string;
   private geminiAPIKey: string;
+  private gcsBucketName: string;
   
   constructor() {
+    // --- Add Debug Log Here ---
+    // console.log("DEBUG: Reading GOOGLE_APPLICATION_CREDENTIALS env var:", process.env.GOOGLE_APPLICATION_CREDENTIALS); // No longer reading this one
+    console.log("DEBUG: Checking for GOOGLE_APPLICATION_CREDENTIALS_JSON env var existence:", !!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+    // --- End Debug Log ---
+    
     this.anthropicAPIKey = process.env.ANTHROPIC_API_KEY || '';
     this.geminiAPIKey = process.env.GOOGLE_AI_API_KEY || '';
+    this.gcsBucketName = process.env.GCS_BUCKET_NAME || '';
+    // No longer need keyFilePath property
+    // this.keyFilePath = process.env.GOOGLE_APPLICATION_CREDENTIALS; 
+    
+    let googleCredentials: Record<string, any> | undefined = undefined;
+    const credentialsJsonString = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+
+    if (!this.gcsBucketName) {
+        console.warn("GCS_BUCKET_NAME environment variable not set. Transcription of long audio files will fail.");
+    }
+
+    if (credentialsJsonString) {
+        try {
+            googleCredentials = JSON.parse(credentialsJsonString);
+            console.log("Successfully parsed GOOGLE_APPLICATION_CREDENTIALS_JSON.");
+        } catch (e) {
+            console.error("Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON. Google Cloud services might fail.", e);
+        }
+    } else {
+        console.error("GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable not set. Google Cloud services might fail.");
+    }
     
     this.anthropicClient = new Anthropic({
       apiKey: this.anthropicAPIKey,
@@ -53,15 +82,10 @@ export class AIService {
     
     this.geminiClient = new GoogleGenerativeAI(this.geminiAPIKey);
     
-    // Set up Google Cloud credentials from environment
-    const credentials = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-    if (!credentials) {
-      throw new Error('GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is required');
-    }
-    
-    this.speechClient = new SpeechClient({
-      credentials: JSON.parse(credentials)
-    });
+    // Initialize Google Cloud clients explicitly using the parsed credentials object
+    // The constructors accept 'undefined' for credentials, falling back to default discovery
+    this.speechClient = new SpeechClient({ credentials: googleCredentials }); 
+    this.storageClient = new Storage({ credentials: googleCredentials });
   }
   
   validateAPIKeys(): boolean {
@@ -113,56 +137,79 @@ export class AIService {
   
   async transcribeAudio(audioPath: string): Promise<string> {
     console.log(`Starting transcription for audio file: ${audioPath}`);
+    
+    if (!this.gcsBucketName) {
+        console.error("GCS Bucket Name not configured. Cannot transcribe long audio.");
+        return ''; // Cannot proceed without a bucket
+    }
+
+    const originalFilename = path.basename(audioPath);
+    const gcsObjectName = `temp-transcribe-audio/${uuidv4()}-${originalFilename}`; // Unique name in GCS
+    const gcsUri = `gs://${this.gcsBucketName}/${gcsObjectName}`;
+    let uploaded = false;
+
     try {
-      // Reads a local audio file and converts it to base64
-      const file = await fs.promises.readFile(audioPath);
-      const audioBytes = file.toString('base64');
-
-      // The audio file's encoding, sample rate in hertz, and BCP-47 language code
-      const audio = {
-        content: audioBytes,
-      };
-      const config = {
-        // encoding: 'LINEAR16', // Required for WAV
-        // sampleRateHertz: 44100, // Match the extraction rate
-        // Instead of encoding and sampleRateHertz, use auto-detection for simplicity if possible
-        // or ensure the format from ffmpeg matches required params
-        // Let's rely on auto-detection if the API supports it well for WAV
-        // If issues arise, explicitly set encoding and sampleRateHertz
-        languageCode: 'en-US', // Assuming English for now
-        model: 'latest_long', // Use the specified model for long audio
-        // Enable automatic punctuation - useful for narration
-        enableAutomaticPunctuation: true, 
-      };
-      const request = {
-        audio: audio,
-        config: config,
-      };
-
-      // Detects speech in the audio file
-      console.log('Sending request to Google Cloud Speech-to-Text...');
-      const [operation] = await this.speechClient.longRunningRecognize(request);
-      
-      console.log('Waiting for transcription operation to complete...');
-      const [response] = await operation.promise();
-      console.log('Transcription operation completed.');
-
-      if (!response.results || response.results.length === 0) {
-        console.warn(`Transcription result empty for ${audioPath}`);
-        return ''; // Return empty string if no transcription results
-      }
-      
-      const transcription = response.results
-        .map(result => result.alternatives![0].transcript)
-        .join('\n');
+        // --- Upload to GCS --- 
+        console.log(`Uploading ${audioPath} to ${gcsUri}...`);
+        await this.storageClient.bucket(this.gcsBucketName).upload(audioPath, {
+            destination: gcsObjectName,
+            // Optional: Add metadata if needed
+        });
+        uploaded = true;
+        console.log(`Successfully uploaded audio to ${gcsUri}`);
+        // --- End Upload ---
         
-      console.log(`Transcription successful for ${audioPath}. Length: ${transcription.length}`);
-      return transcription;
+        // Configure transcription request using GCS URI
+        const audio = {
+            uri: gcsUri, // Use GCS URI instead of inline content
+        };
+        const config = {
+            // No need for encoding/sampleRateHertz when using URI with WAV?
+            // API generally infers from the file itself
+            languageCode: 'en-US',
+            model: 'latest_long',
+            enableAutomaticPunctuation: true,
+        };
+        const request = {
+            audio: audio,
+            config: config,
+        };
+
+        console.log('Sending long running recognize request to Google Cloud Speech-to-Text using GCS URI...');
+        const [operation] = await this.speechClient.longRunningRecognize(request);
+
+        console.log('Waiting for transcription operation to complete...');
+        const [response] = await operation.promise();
+        console.log('Transcription operation completed.');
+
+        if (!response.results || response.results.length === 0) {
+            console.warn(`Transcription result empty for ${gcsUri}`);
+            return '';
+        }
+
+        const transcription = response.results
+            .map(result => result.alternatives![0].transcript)
+            .join('\n');
+
+        console.log(`Transcription successful for ${gcsUri}. Length: ${transcription.length}`);
+        return transcription;
+
     } catch (error) {
-      console.error(`Failed to transcribe audio file ${audioPath}:`, error);
-      // Don't throw, return empty string to allow workflow to potentially continue
-      // Consider adding specific error handling or status updates if needed
-      return ''; 
+        console.error(`Failed to transcribe audio from ${gcsUri || audioPath}:`, error);
+        return '';
+    } finally {
+        // --- GCS Cleanup --- 
+        if (uploaded) {
+            console.log(`Attempting cleanup of GCS object: ${gcsUri}`);
+            try {
+                await this.storageClient.bucket(this.gcsBucketName).file(gcsObjectName).delete();
+                console.log(`Successfully deleted GCS object: ${gcsUri}`);
+            } catch (cleanupError) {
+                console.error(`Error deleting GCS object ${gcsUri}:`, cleanupError);
+                // Log error but don't throw, transcription might have succeeded
+            }
+        }
+        // --- End GCS Cleanup ---
     }
   }
   

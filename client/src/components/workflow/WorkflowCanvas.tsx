@@ -173,40 +173,7 @@ export const WorkflowCanvas = ({
           attributionPosition="bottom-right"
         >
           <Controls />
-          <MiniMap 
-            nodeColor={(node) => {
-              const block = node.data as Block;
-              switch (block.type) {
-                case BlockType.Document: return '#10B981';
-                case BlockType.Data: return '#3B82F6';
-                case BlockType.Presentation: return '#8B5CF6';
-                case BlockType.Interface: return '#F59E0B';
-                default: return '#9CA3AF';
-              }
-            }}
-            maskColor="rgba(240, 242, 245, 0.7)"
-          />
           <Background color="#f8f8f8" gap={12} size={1} />
-          <Panel position="top-right" className="bg-white p-2 rounded shadow">
-            <div className="text-xs text-gray-500">
-              <div className="flex items-center mb-1">
-                <div className="w-3 h-3 bg-green-500 rounded-full mr-2"></div>
-                <span>Document Blocks</span>
-              </div>
-              <div className="flex items-center mb-1">
-                <div className="w-3 h-3 bg-blue-500 rounded-full mr-2"></div>
-                <span>Data Blocks</span>
-              </div>
-              <div className="flex items-center mb-1">
-                <div className="w-3 h-3 bg-purple-500 rounded-full mr-2"></div>
-                <span>Presentation Blocks</span>
-              </div>
-              <div className="flex items-center">
-                <div className="w-3 h-3 bg-yellow-500 rounded-full mr-2"></div>
-                <span>Interface Blocks</span>
-              </div>
-            </div>
-          </Panel>
         </ReactFlow>
       </div>
     </ReactFlowProvider>

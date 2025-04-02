@@ -117,11 +117,11 @@ export class VideoProcessor {
       command
         // Log the exact command being run
         .on('start', (commandLine: string) => {
-          console.log('Spawned Ffmpeg with command: ' + commandLine);
+          // console.log('Spawned Ffmpeg with command: ' + commandLine); // Silenced
         })
         // Log any output from ffmpeg's stderr
         .on('stderr', (stderrLine: string) => {
-          console.log('Ffmpeg stderr: ' + stderrLine);
+          // console.log('Ffmpeg stderr: ' + stderrLine); // Silenced unless needed for debugging
         })
         // REMOVE the problematic 'filenames' handler
         /*
@@ -198,10 +198,9 @@ export class VideoProcessor {
         ])
         .output(audioOutputPath)
         .on('start', (commandLine: string) => {
-          console.log('Spawned Ffmpeg for audio extraction with command: ' + commandLine);
+          // console.log('Spawned Ffmpeg for audio extraction with command: ' + commandLine); // Silenced
         })
         .on('stderr', (stderrLine: string) => {
-          // Don't log every single stderr line, can be noisy
           // console.log('Ffmpeg (audio) stderr: ' + stderrLine);
         })
         .on('end', () => {
