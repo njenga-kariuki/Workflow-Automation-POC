@@ -52,7 +52,16 @@ export class AIService {
     });
     
     this.geminiClient = new GoogleGenerativeAI(this.geminiAPIKey);
-    this.speechClient = new SpeechClient();
+    
+    // Set up Google Cloud credentials from environment
+    const credentials = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    if (!credentials) {
+      throw new Error('GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable is required');
+    }
+    
+    this.speechClient = new SpeechClient({
+      credentials: JSON.parse(credentials)
+    });
   }
   
   validateAPIKeys(): boolean {
