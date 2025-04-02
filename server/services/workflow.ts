@@ -2,9 +2,14 @@ import { BlockStructure } from '@shared/schema';
 import { storage } from '../storage';
 import { videoProcessor } from './videoProcessor';
 import { aiService } from './aiService';
+import fs from 'fs'; // Import fs for cleanup
+import path from 'path'; // Import path
 
 export class WorkflowService {
   async processWorkflow(workflowId: number): Promise<boolean> {
+    let tempFrameDir: string | null = null; // Variable to hold temp dir path
+    let tempAudioPath: string | null = null; // Variable to hold temp audio path
+    
     try {
       // Get workflow data
       const workflow = await storage.getWorkflow(workflowId);
@@ -27,11 +32,60 @@ export class WorkflowService {
       }
       
       const processedVideoPath = await videoProcessor.preprocessVideo(workflow.videoPath);
-      const framePaths = await videoProcessor.extractFrames(processedVideoPath);
       
-      // Step 2: Raw workflow extraction using Gemini 2.0 Flash
+      // --- Extract Frames and Audio Concurrently ---
+      console.log(`Starting frame and audio extraction for workflow ${workflowId}`);
+      let framePaths: string[] = [];
+      let audioTranscript: string = '';
+
+      const extractionPromises = [];
+
+      // Promise for frame extraction
+      extractionPromises.push(
+          videoProcessor.extractFrames(processedVideoPath, workflowId).then(result => {
+              tempFrameDir = result.tempDir; // Store tempDir path for cleanup
+              framePaths = result.framePaths;
+              console.log(`Frame extraction completed for workflow ${workflowId}`);
+          }).catch(err => {
+              console.error(`Frame extraction failed for workflow ${workflowId}:`, err);
+              throw err; // Propagate error
+          })
+      );
+
+      // Promise for audio extraction and transcription
+      extractionPromises.push(
+          videoProcessor.extractAudio(processedVideoPath, workflowId).then(async (audioPath) => {
+              tempAudioPath = audioPath; // Store temp audio path for cleanup
+              console.log(`Audio extraction completed for workflow ${workflowId}, starting transcription.`);
+              return aiService.transcribeAudio(audioPath);
+          }).then(transcript => {
+              audioTranscript = transcript;
+              console.log(`Audio transcription completed for workflow ${workflowId}. Transcript length: ${transcript.length}`);
+              // Attempt cleanup of audio file immediately after transcription
+              if (tempAudioPath) {
+                  fs.promises.rm(tempAudioPath, { force: true }).catch(cleanupErr => 
+                      console.error(`Error removing temporary audio file ${tempAudioPath} immediately:`, cleanupErr)
+                  );
+                  // Don't nullify tempAudioPath here, keep it for the final finally block just in case
+              }
+          }).catch(err => {
+              console.error(`Audio processing (extraction/transcription) failed for workflow ${workflowId}:`, err);
+              // Decide if you want to throw or continue without audio
+              // For now, let's allow continuing without audio transcript
+              console.warn('Proceeding with workflow processing without audio transcript due to error.');
+              audioTranscript = ''; // Ensure it's an empty string if failed
+          })
+      );
+      
+      // Wait for both frame and audio processing to complete
+      await Promise.all(extractionPromises);
+      console.log(`Frame and audio processing finished for workflow ${workflowId}`);
+      // --- End of Concurrent Extraction ---
+
+      // Step 2: Raw workflow extraction using Gemini and Claude
       console.log(`Starting raw extraction for workflow ${workflowId}`);
-      const rawExtraction = await aiService.extractRawWorkflow(processedVideoPath, framePaths);
+      // Pass the audioTranscript (which might be empty if transcription failed)
+      const rawExtraction = await aiService.extractRawWorkflow(processedVideoPath, framePaths, audioTranscript);
       await storage.updateWorkflowRawExtraction(workflowId, rawExtraction);
       
       // Step 3: Workflow organization using Claude 3.7 Sonnet
@@ -52,6 +106,32 @@ export class WorkflowService {
       console.error(`Error processing workflow ${workflowId}:`, error);
       await storage.updateWorkflowStatus(workflowId, 'failed');
       return false;
+    } finally {
+      // Cleanup: Always attempt to remove the temporary directories/files
+      const cleanupPromises = [];
+      if (tempFrameDir) {
+        console.log(`Attempting final cleanup of temporary frame directory: ${tempFrameDir}`);
+        cleanupPromises.push(
+          fs.promises.rm(tempFrameDir, { recursive: true, force: true })
+            .then(() => console.log(`Successfully removed temporary frame directory: ${tempFrameDir}`))
+            .catch(cleanupError => console.error(`Error removing temporary frame directory ${tempFrameDir}:`, cleanupError))
+        );
+      }
+      // Also attempt cleanup for audio file in finally block, in case immediate cleanup failed
+      if (tempAudioPath) {
+         console.log(`Attempting final cleanup of temporary audio file: ${tempAudioPath}`);
+         cleanupPromises.push(
+           fs.promises.rm(tempAudioPath, { force: true })
+             .then(() => console.log(`Successfully removed temporary audio file: ${tempAudioPath}`))
+             .catch(cleanupError => {
+                 // Check if it's a 'file not found' error (ENOENT), which is okay if immediate cleanup worked
+                 if (cleanupError.code !== 'ENOENT') {
+                     console.error(`Error removing temporary audio file ${tempAudioPath} in final cleanup:`, cleanupError);
+                 }
+             })
+         );
+      }
+      await Promise.all(cleanupPromises);
     }
   }
   

@@ -2,39 +2,33 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { WorkflowCanvas } from "./WorkflowCanvas";
 import { PropertiesPanel } from "./PropertiesPanel";
-import { Block, BlockStructure } from "@shared/schema";
+import { Block, BlockStructure, Workflow } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Download,
   Edit,
   Play,
-  Search
 } from "lucide-react";
+import { IntermediateOutputsPanel } from "./IntermediateOutputsPanel";
 
 interface WorkflowViewerProps {
   workflowId: number;
-  workflow: {
-    title: string;
-    createdAt: string;
-    updatedAt: string;
-    blockStructure: BlockStructure | null;
-  };
+  workflow: Workflow;
 }
 
 export const WorkflowViewer = ({ workflowId, workflow }: WorkflowViewerProps) => {
   const { toast } = useToast();
   
   const [blockStructure, setBlockStructure] = useState<BlockStructure | null>(
-    workflow.blockStructure
+    null
   );
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState<boolean>(false);
   
   useEffect(() => {
-    if (workflow.blockStructure) {
-      setBlockStructure(workflow.blockStructure);
-    }
+    const initialBlockStructure = workflow.blockStructure as BlockStructure | null;
+    setBlockStructure(initialBlockStructure);
   }, [workflow.blockStructure]);
   
   const handleSelectBlock = (id: string) => {
@@ -54,7 +48,7 @@ export const WorkflowViewer = ({ workflowId, workflow }: WorkflowViewerProps) =>
       block.id === updatedBlock.id ? updatedBlock : block
     );
     
-    const updatedBlockStructure = {
+    const updatedBlockStructure: BlockStructure = {
       ...blockStructure,
       blocks: updatedBlocks
     };
@@ -147,14 +141,14 @@ export const WorkflowViewer = ({ workflowId, workflow }: WorkflowViewerProps) =>
   
   return (
     <div className="flex flex-col h-full">
-      <div className="border-b border-gray-200 pb-5 flex justify-between items-center">
+      <div className="border-b border-gray-200 px-6 py-6 flex flex-col sm:flex-row justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{workflow.title || "Your Workflow"}</h1>
+          <h1 className="text-3xl font-bold text-gray-900">{workflow.title || "Your Workflow"}</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Created on {formatDate(workflow.createdAt)} • Last edited {formatTime(workflow.updatedAt)}
+            Created on {formatDate(String(workflow.createdAt))} • Last edited {formatTime(String(workflow.updatedAt))}
           </p>
         </div>
-        <div className="flex space-x-3">
+        <div className="flex space-x-3 shrink-0">
           <Button variant="outline" onClick={handleExportWorkflow}>
             <Download className="mr-2 h-4 w-4 text-gray-500" />
             Export
@@ -170,16 +164,10 @@ export const WorkflowViewer = ({ workflowId, workflow }: WorkflowViewerProps) =>
         </div>
       </div>
 
-      <div className="mt-6 flex flex-1">
-        {/* Workflow Canvas */}
-        <div className="flex-1 bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="p-6 flex-1 flex gap-8 overflow-y-auto">
+        <div className="flex-1 bg-white border border-gray-200 rounded-lg overflow-hidden flex flex-col">
           <div className="p-4 border-b border-gray-200 flex justify-between items-center">
-            <h2 className="text-lg font-medium text-gray-900">Workflow Diagram</h2>
-            <div className="flex space-x-2">
-              <button className="p-1 rounded-md hover:bg-gray-100">
-                <Search className="h-5 w-5 text-gray-500" />
-              </button>
-            </div>
+            <h2 className="text-lg font-semibold text-gray-900">Workflow Diagram</h2>
           </div>
           <div className="h-[calc(100%-57px)] overflow-hidden">
             <WorkflowCanvas 
@@ -191,16 +179,23 @@ export const WorkflowViewer = ({ workflowId, workflow }: WorkflowViewerProps) =>
           </div>
         </div>
 
-        {/* Properties Panel */}
-        <div className="w-80 ml-6 bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="w-80 shrink-0 bg-white border border-gray-200 rounded-lg overflow-hidden flex flex-col">
           <div className="p-4 border-b border-gray-200">
-            <h2 className="text-lg font-medium text-gray-900">Properties</h2>
+            <h2 className="text-lg font-semibold text-gray-900">Properties</h2>
           </div>
           <PropertiesPanel 
             selectedBlock={getSelectedBlock()}
             onUpdateBlock={handleUpdateBlock}
           />
         </div>
+      </div>
+
+      {/* Intermediate Outputs Panel */}
+      <div className="px-6 pb-6">
+        <IntermediateOutputsPanel 
+          rawExtraction={(workflow as Workflow).rawExtraction}
+          organizedWorkflow={(workflow as Workflow).organizedWorkflow}
+        />
       </div>
     </div>
   );

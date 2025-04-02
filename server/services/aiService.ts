@@ -1,6 +1,7 @@
 import { BlockStructure, BlockType, SourceType, UpdateRule } from '@shared/schema';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import { SpeechClient } from '@google-cloud/speech';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -38,6 +39,7 @@ interface OrganizedWorkflow {
 export class AIService {
   private anthropicClient: Anthropic;
   private geminiClient: GoogleGenerativeAI;
+  private speechClient: SpeechClient;
   private anthropicAPIKey: string;
   private geminiAPIKey: string;
   
@@ -50,6 +52,7 @@ export class AIService {
     });
     
     this.geminiClient = new GoogleGenerativeAI(this.geminiAPIKey);
+    this.speechClient = new SpeechClient();
   }
   
   validateAPIKeys(): boolean {
@@ -78,6 +81,79 @@ export class AIService {
     } catch (error) {
       console.error('Error extracting text from response:', error);
       return 'Failed to extract text from response';
+    }
+  }
+  
+  // Helper to parse JSON response, potentially cleaning up markdown code blocks
+  private _parseJsonResponse<T>(responseText: string, methodName: string): T {
+    const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || 
+                      responseText.match(/```\n([\s\S]*?)\n```/) ||
+                      [null, responseText]; // Assume raw text might be JSON if no markdown found
+
+    const extractedJson = jsonMatch[1].trim();
+
+    try {
+      return JSON.parse(extractedJson) as T;
+    } catch (jsonError) {
+      console.error(`Failed to parse JSON from ${methodName} response:`, jsonError);
+      console.log("Raw response text:", responseText); 
+      // Throw a new error with context
+      throw new Error(`Failed to parse JSON response in ${methodName}.`); 
+    }
+  }
+  
+  async transcribeAudio(audioPath: string): Promise<string> {
+    console.log(`Starting transcription for audio file: ${audioPath}`);
+    try {
+      // Reads a local audio file and converts it to base64
+      const file = await fs.promises.readFile(audioPath);
+      const audioBytes = file.toString('base64');
+
+      // The audio file's encoding, sample rate in hertz, and BCP-47 language code
+      const audio = {
+        content: audioBytes,
+      };
+      const config = {
+        // encoding: 'LINEAR16', // Required for WAV
+        // sampleRateHertz: 44100, // Match the extraction rate
+        // Instead of encoding and sampleRateHertz, use auto-detection for simplicity if possible
+        // or ensure the format from ffmpeg matches required params
+        // Let's rely on auto-detection if the API supports it well for WAV
+        // If issues arise, explicitly set encoding and sampleRateHertz
+        languageCode: 'en-US', // Assuming English for now
+        model: 'latest_long', // Use the specified model for long audio
+        // Enable automatic punctuation - useful for narration
+        enableAutomaticPunctuation: true, 
+      };
+      const request = {
+        audio: audio,
+        config: config,
+      };
+
+      // Detects speech in the audio file
+      console.log('Sending request to Google Cloud Speech-to-Text...');
+      const [operation] = await this.speechClient.longRunningRecognize(request);
+      
+      console.log('Waiting for transcription operation to complete...');
+      const [response] = await operation.promise();
+      console.log('Transcription operation completed.');
+
+      if (!response.results || response.results.length === 0) {
+        console.warn(`Transcription result empty for ${audioPath}`);
+        return ''; // Return empty string if no transcription results
+      }
+      
+      const transcription = response.results
+        .map(result => result.alternatives![0].transcript)
+        .join('\n');
+        
+      console.log(`Transcription successful for ${audioPath}. Length: ${transcription.length}`);
+      return transcription;
+    } catch (error) {
+      console.error(`Failed to transcribe audio file ${audioPath}:`, error);
+      // Don't throw, return empty string to allow workflow to potentially continue
+      // Consider adding specific error handling or status updates if needed
+      return ''; 
     }
   }
   
@@ -133,7 +209,7 @@ export class AIService {
         
         return {
           frameIndex: index,
-          description
+          description: description
         };
       } catch (error) {
         console.error(`Error processing frame ${framePath} with Gemini:`, error);
@@ -147,28 +223,33 @@ export class AIService {
     // Use Claude to generate a structured transcript based on frame descriptions
     // and audio transcript if available
     const transcriptPrompt = `
-    I need to create a structured transcript of a workflow video. 
-    
-    Here are descriptions of key frames from the video:
-    ${frameDescriptions.map(fd => `Frame ${fd.frameIndex}: ${fd.description}`).join('\n\n')}
-    
-    ${audioTranscript ? `And here is the audio transcript from the video: ${audioTranscript}` : ''}
-    
-    Based on this information, generate a structured transcript of the workflow in the following JSON format:
+    I need to create a structured chronological transcript of a workflow video, synthesizing information from visual frames and user audio narration. The output must be in the following JSON format:
     {
       "transcript": [
         {
-          "time": number (timestamp in seconds),
-          "screen": string (description of what's visible on screen),
-          "action": string (user action being performed),
-          "narration": string (what the user is saying, if available)
+          "time": number (estimated timestamp or frame index),
+          "screen": string (description of the main application/window visible),
+          "action": string (specific user action performed),
+          "narration": string (synthesized narration combining visual action and spoken explanation)
         }
+        // ... more steps
       ]
     }
-    
-    Create at least 5-10 steps that would reasonably represent the workflow shown in these frames.
-    If no audio transcript is available, you can infer reasonable narration based on the actions.
-    Ensure the steps follow a logical progression.
+
+    Here are descriptions of key frames from the video:
+    ${frameDescriptions.map(fd => `Frame ${fd.frameIndex}: ${fd.description}`).join('\n\n')}
+
+    ${audioTranscript ? `And here is the complete audio transcript from the video:\n\"\"\"\n${audioTranscript}\n\"\"\"` : 'No audio transcript was provided.'}
+
+    Follow these instructions carefully:
+    1. Analyze the frame descriptions to identify the sequence of distinct user actions and the state of the screen at each step.
+    2. For each identified step, determine the primary \`action\` performed and the \`screen\` context. Assign an approximate \`time\` or frame index.
+    3. Generate the \`narration\` for each step by doing the following:
+        a. Start with a brief, objective description of the core visual \`action\` identified from the frames (e.g., "User clicked 'Save button'.").
+        b. ${audioTranscript ? 'Consult the provided audio transcript. Find the segment of the transcript that corresponds to this visual action based on timing and context.' : ''}
+        c. ${audioTranscript ? 'Append relevant explanations, context, goals, or details spoken by the user during that segment. Focus on adding the user\'s *why* or extra information that complements the visual *what*. Do not just repeat the action description.' : ''}
+        d. ${audioTranscript ? 'If the audio transcript is silent or clearly irrelevant during the time of this visual action, the narration should primarily consist of the objective description from step 3a.' : 'Since no audio transcript was provided, the narration should consist of the objective description of the visual action.'}
+    4. Ensure the final output is a valid JSON object matching the specified structure, containing a \`transcript\` array of step objects. Maintain chronological order and keep steps granular.
     `;
     
     try {
@@ -186,93 +267,20 @@ export class AIService {
       // Extract text from response
       const responseText = this.extractTextFromResponse(response.content);
       
-      // Extract and parse the JSON from Claude's response
-      const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || 
-                        responseText.match(/```\n([\s\S]*?)\n```/) ||
-                        [null, responseText];
+      // Parse the response using the helper method
+      const parsedResult = this._parseJsonResponse<RawWorkflowExtraction>(responseText, 'extractRawWorkflow');
       
-      const extractedJson = jsonMatch[1].trim();
-      
-      try {
-        return JSON.parse(extractedJson);
-      } catch (jsonError) {
-        console.error("Failed to parse JSON from Claude response:", jsonError);
-        console.log("Raw response:", responseText);
-        
-        // Fallback to a sample transcript
-        return this.getSampleTranscript();
-      }
+      // LOGGING ADDED HERE
+      console.log("--- Raw Workflow Extraction Output ---");
+      console.log(JSON.stringify(parsedResult, null, 2));
+      console.log("-------------------------------------");
+      return parsedResult;
     } catch (error) {
-      console.error("Error calling Claude for transcript generation:", error);
-      return this.getSampleTranscript();
+      // Catch API errors or parsing errors from the helper
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Error calling Claude for transcript generation:", message);
+      throw new Error(`AI service failed during transcript generation: ${message}`);
     }
-  }
-  
-  private getSampleTranscript(): RawWorkflowExtraction {
-    return {
-      transcript: [
-        {
-          time: 0,
-          screen: "User opens Excel spreadsheet containing monthly sales data",
-          action: "Double-clicks on file 'March2023.xlsx'",
-          narration: "I'm starting with our monthly sales spreadsheet for March 2023"
-        },
-        {
-          time: 15,
-          screen: "Excel spreadsheet shows sales data with columns for regions, products, and amounts",
-          action: "Selects cells B2:E20 and applies a filter",
-          narration: "First I need to filter the data by region to separate sales by territory"
-        },
-        {
-          time: 30,
-          screen: "Excel spreadsheet with filtered data showing only North region sales",
-          action: "Creates a SUM formula to calculate total sales",
-          narration: "Now I'll calculate the total sales for the North region using SUM function"
-        },
-        {
-          time: 45,
-          screen: "Excel spreadsheet with summary section containing calculated totals",
-          action: "Copies data and switches to PowerPoint",
-          narration: "I'll now transfer this summary data to our quarterly report presentation"
-        },
-        {
-          time: 60,
-          screen: "PowerPoint slide with title 'Quarterly Sales Report'",
-          action: "Creates a new slide and pastes the data",
-          narration: "I'm creating a new slide for our March sales data"
-        },
-        {
-          time: 75,
-          screen: "PowerPoint slide with pasted data and inserting chart",
-          action: "Creates bar chart from the data",
-          narration: "Now I'll visualize this data with a bar chart for easier comprehension"
-        },
-        {
-          time: 90,
-          screen: "PowerPoint with completed slide containing formatted chart and data",
-          action: "Saves presentation and switches to Outlook",
-          narration: "Once the slide is formatted, I save the presentation and prepare to email it"
-        },
-        {
-          time: 105,
-          screen: "Outlook new email window",
-          action: "Creates new email, adds recipients from team list",
-          narration: "Now I need to email this report to the team including our managers"
-        },
-        {
-          time: 120,
-          screen: "Outlook email with attachment and written message",
-          action: "Attaches PowerPoint file and writes email body",
-          narration: "I attach the presentation and write a brief summary of the key findings"
-        },
-        {
-          time: 135,
-          screen: "Outlook email ready to send",
-          action: "Clicks send button",
-          narration: "Finally, I send the email to distribute the report to stakeholders"
-        }
-      ]
-    };
   }
   
   async organizeWorkflow(rawExtraction: RawWorkflowExtraction): Promise<OrganizedWorkflow> {
@@ -310,6 +318,7 @@ export class AIService {
     
     Combine similar actions into cohesive steps, identify patterns, and extract any conditional logic.
     Use your judgment to infer information not explicitly stated in the transcript.
+    Prioritize accurately reflecting the details present in the provided transcript when inferring missing information.
     `;
     
     try {
@@ -327,93 +336,20 @@ export class AIService {
       // Extract text from response
       const responseText = this.extractTextFromResponse(response.content);
       
-      // Extract and parse the JSON from Claude's response
-      const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || 
-                        responseText.match(/```\n([\s\S]*?)\n```/) ||
-                        [null, responseText];
+      // Parse the response using the helper method
+      const parsedResult = this._parseJsonResponse<OrganizedWorkflow>(responseText, 'organizeWorkflow');
       
-      const extractedJson = jsonMatch[1].trim();
-      
-      try {
-        return JSON.parse(extractedJson);
-      } catch (jsonError) {
-        console.error("Failed to parse JSON from Claude response:", jsonError);
-        console.log("Raw response:", responseText);
-        
-        // Fallback to a sample organization
-        return this.getSampleOrganizedWorkflow();
-      }
+      // LOGGING ADDED HERE
+      console.log("--- Organized Workflow Output ---");
+      console.log(JSON.stringify(parsedResult, null, 2));
+      console.log("---------------------------------");
+      return parsedResult;
     } catch (error) {
-      console.error("Error calling Claude for workflow organization:", error);
-      return this.getSampleOrganizedWorkflow();
+      // Catch API errors or parsing errors from the helper
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Error calling Claude for workflow organization:", message);
+      throw new Error(`AI service failed during workflow organization: ${message}`);
     }
-  }
-  
-  private getSampleOrganizedWorkflow(): OrganizedWorkflow {
-    return {
-      steps: [
-        {
-          number: 1,
-          action: "Open source data file",
-          applications: ["Microsoft Excel"],
-          input: {
-            data: "Monthly sales spreadsheet",
-            source: "Local file system"
-          },
-          output: {
-            data: "Raw sales data",
-            destination: "Excel worksheet"
-          },
-          considerations: ["Ensure most recent file version is used"]
-        },
-        {
-          number: 2,
-          action: "Filter and process data",
-          applications: ["Microsoft Excel"],
-          input: {
-            data: "Raw sales data",
-            source: "Excel worksheet"
-          },
-          output: {
-            data: "Filtered and summarized sales data",
-            destination: "Excel worksheet"
-          },
-          considerations: ["Apply correct regional filters", "Verify formula accuracy"]
-        },
-        {
-          number: 3,
-          action: "Create visualization",
-          applications: ["Microsoft PowerPoint"],
-          input: {
-            data: "Filtered and summarized sales data",
-            source: "Excel worksheet"
-          },
-          output: {
-            data: "Visual sales report",
-            destination: "PowerPoint presentation"
-          },
-          considerations: ["Use consistent chart formatting", "Include all relevant data points"]
-        },
-        {
-          number: 4,
-          action: "Distribute report",
-          applications: ["Microsoft Outlook"],
-          input: {
-            data: "Visual sales report",
-            source: "PowerPoint presentation"
-          },
-          output: {
-            data: "Delivered report",
-            destination: "Stakeholder email inboxes"
-          },
-          considerations: ["Include all required recipients", "Provide context in email body"]
-        }
-      ],
-      patterns: ["Monthly reporting cycle", "Regional data filtering before summary"],
-      conditionalLogic: ["If data contains errors, note discrepancies in email"],
-      triggers: ["Month-end closing", "Request from management"],
-      frequency: "Monthly"
-    };
   }
   
   async generateBlockStructure(organizedWorkflow: OrganizedWorkflow): Promise<BlockStructure> {
@@ -495,143 +431,62 @@ export class AIService {
       // Extract text from response
       const responseText = this.extractTextFromResponse(response.content);
       
-      // Extract and parse the JSON from Claude's response
-      const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || 
-                        responseText.match(/```\n([\s\S]*?)\n```/) ||
-                        [null, responseText];
+      // Parse the response using the helper method
+      // Note: Validation of enums happens after parsing
+      const parsedStructure = this._parseJsonResponse<any>(responseText, 'generateBlockStructure');
       
-      const extractedJson = jsonMatch[1].trim();
+      // Ensure block types are valid enum values
+      parsedStructure.blocks = parsedStructure.blocks.map((block: any) => {
+        // Convert type string to enum
+        const validTypes = Object.values(BlockType);
+        if (!validTypes.includes(block.type)) {
+          // Default to document if invalid
+          block.type = BlockType.Document;
+        }
+        return block;
+      });
       
-      try {
-        const parsedStructure = JSON.parse(extractedJson);
+      // Ensure source types are valid enum values
+      parsedStructure.sources = parsedStructure.sources.map((source: any) => {
+        // Convert type string to enum
+        const validTypes = Object.values(SourceType);
+        if (!validTypes.includes(source.type)) {
+          // Default to file if invalid
+          source.type = SourceType.File;
+        }
         
-        // Ensure block types are valid enum values
-        parsedStructure.blocks = parsedStructure.blocks.map((block: any) => {
-          // Convert type string to enum
-          const validTypes = Object.values(BlockType);
-          if (!validTypes.includes(block.type)) {
-            // Default to document if invalid
-            block.type = BlockType.Document;
-          }
-          return block;
-        });
-        
-        // Ensure source types are valid enum values
-        parsedStructure.sources = parsedStructure.sources.map((source: any) => {
-          // Convert type string to enum
-          const validTypes = Object.values(SourceType);
-          if (!validTypes.includes(source.type)) {
-            // Default to file if invalid
-            source.type = SourceType.File;
-          }
-          
-          // Convert updateRules string to enum
-          const validRules = Object.values(UpdateRule);
-          if (!validRules.includes(source.updateRules)) {
-            // Default to manual if invalid
-            source.updateRules = UpdateRule.Manual;
-          }
-          return source;
-        });
-        
-        // Ensure connection updateRules are valid enum values
-        parsedStructure.connections = parsedStructure.connections.map((connection: any) => {
-          // Convert updateRules string to enum
-          const validRules = Object.values(UpdateRule);
-          if (!validRules.includes(connection.updateRules)) {
-            // Default to manual if invalid
-            connection.updateRules = UpdateRule.Manual;
-          }
-          return connection;
-        });
-        
-        return parsedStructure;
-      } catch (jsonError) {
-        console.error("Failed to parse JSON from Claude response:", jsonError);
-        console.log("Raw response:", responseText);
-        
-        // Fallback to a sample block structure
-        return this.getSampleBlockStructure();
-      }
+        // Convert updateRules string to enum
+        const validRules = Object.values(UpdateRule);
+        if (!validRules.includes(source.updateRules)) {
+          // Default to manual if invalid
+          source.updateRules = UpdateRule.Manual;
+        }
+        return source;
+      });
+      
+      // Ensure connection updateRules are valid enum values
+      parsedStructure.connections = parsedStructure.connections.map((connection: any) => {
+        // Convert updateRules string to enum
+        const validRules = Object.values(UpdateRule);
+        if (!validRules.includes(connection.updateRules)) {
+          // Default to manual if invalid
+          connection.updateRules = UpdateRule.Manual;
+        }
+        return connection;
+      });
+      
+      // LOGGING ADDED HERE
+      console.log("--- Generated Block Structure Output ---");
+      console.log(JSON.stringify(parsedStructure, null, 2));
+      console.log("----------------------------------------");
+      
+      return parsedStructure;
     } catch (error) {
-      console.error("Error calling Claude for block structure generation:", error);
-      return this.getSampleBlockStructure();
+      // Catch API errors or parsing errors from the helper
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Error calling Claude for block structure generation:", message);
+      throw new Error(`AI service failed during block structure generation: ${message}`);
     }
-  }
-  
-  private getSampleBlockStructure(): BlockStructure {
-    return {
-      blocks: [
-        {
-          id: "block-1",
-          type: BlockType.Data,
-          title: "Excel Spreadsheet",
-          description: "Source data from monthly sales spreadsheet",
-          properties: {
-            format: "xlsx",
-            location: "/Documents/Sales/March2023.xlsx"
-          }
-        },
-        {
-          id: "block-2",
-          type: BlockType.Data,
-          title: "Data Formatting",
-          description: "Format sales data by region and apply calculations",
-          properties: {
-            functions: ["SUM", "AVERAGE", "FILTER"],
-            application: "Microsoft Excel"
-          }
-        },
-        {
-          id: "block-3",
-          type: BlockType.Presentation,
-          title: "Sales Report",
-          description: "Generate formatted quarterly sales report",
-          properties: {
-            format: "pptx",
-            outputType: "Presentation"
-          }
-        },
-        {
-          id: "block-4",
-          type: BlockType.Interface,
-          title: "Email Notification",
-          description: "Send email with report to stakeholders",
-          properties: {
-            application: "Microsoft Outlook",
-            recipients: "Sales Team, Management"
-          }
-        }
-      ],
-      sources: [
-        {
-          id: "source-1",
-          type: SourceType.File,
-          location: "/Documents/Sales/March2023.xlsx",
-          updateRules: UpdateRule.OnSourceChange
-        }
-      ],
-      connections: [
-        {
-          sourceBlockId: "block-1",
-          targetBlockId: "block-2",
-          dataType: "spreadsheet-data",
-          updateRules: UpdateRule.OnSourceChange
-        },
-        {
-          sourceBlockId: "block-2",
-          targetBlockId: "block-3",
-          dataType: "formatted-data",
-          updateRules: UpdateRule.OnSourceChange
-        },
-        {
-          sourceBlockId: "block-2",
-          targetBlockId: "block-4",
-          dataType: "notification-trigger",
-          updateRules: UpdateRule.OnSourceChange
-        }
-      ]
-    };
   }
 }
 
