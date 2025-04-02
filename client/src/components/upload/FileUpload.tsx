@@ -2,7 +2,6 @@ import { useState, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
 import { Upload, Check, AlertCircle } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 export const FileUpload = () => {
@@ -17,28 +16,27 @@ export const FileUpload = () => {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [workflowId, setWorkflowId] = useState<number | null>(null);
+  const [uploadStatusMessage, setUploadStatusMessage] = useState<string>('');
   
   const validateFile = (file: File): boolean => {
-    // Check file extension
     const extension = file.name.split('.').pop()?.toLowerCase();
     if (extension !== 'mov') {
       setValidationError('Please upload a QuickTime (.mov) file.');
       return false;
     }
-    
-    // Check file size (300MB max)
     if (file.size > 300 * 1024 * 1024) {
       setValidationError('File size exceeds 300MB limit.');
       return false;
     }
-    
     setValidationError(null);
     return true;
   };
   
-  const handleFile = useCallback((file: File) => {
-    if (validateFile(file)) {
-      setFile(file);
+  const handleFile = useCallback((selectedFile: File) => {
+    if (validateFile(selectedFile)) {
+      setFile(selectedFile);
+      setUploadSuccess(false);
+      setWorkflowId(null);
     }
   }, []);
   
@@ -63,7 +61,6 @@ export const FileUpload = () => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    
     const droppedFile = e.dataTransfer.files[0];
     if (droppedFile) {
       handleFile(droppedFile);
@@ -78,22 +75,32 @@ export const FileUpload = () => {
   };
   
   const handleUploadClick = () => {
+    if (uploading || uploadSuccess) return;
     fileInputRef.current?.click();
   };
   
   const handleProcessWorkflow = async () => {
-    if (!file || !workflowId) return;
+    if (!uploadSuccess || !workflowId) return;
     
     try {
-      await apiRequest('POST', `/api/workflow/${workflowId}/process`, {});
+      const processResponse = await fetch(`/api/workflow/${workflowId}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      });
       
-      // Redirect to processing page
+      if (!processResponse.ok) {
+          const errorText = await processResponse.text();
+          throw new Error(errorText || `Failed to start processing: ${processResponse.statusText}`);
+      }
+      
       setLocation(`/processing/${workflowId}`);
     } catch (error) {
       console.error('Error starting workflow processing:', error);
       toast({
         title: "Error",
-        description: "Failed to start workflow processing",
+        description: error instanceof Error ? error.message : "Failed to start workflow processing",
         variant: "destructive"
       });
     }
@@ -103,52 +110,94 @@ export const FileUpload = () => {
     if (!file) return;
     
     setUploading(true);
+    setUploadSuccess(false);
+    setValidationError(null);
     setUploadProgress(0);
+    setUploadStatusMessage('Initiating upload...');
     
+    let uploadUrl = '';
+    let gcsPath = '';
+    const title = file.name.replace(/\.mov$/i, '');
+
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('title', file.name.replace('.mov', ''));
-      
-      // Simulate upload progress
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 95) {
-            clearInterval(progressInterval);
-            return 95;
-          }
-          return prev + 5;
-        });
-      }, 200);
-      
-      const response = await fetch('/api/upload', {
+      setUploadProgress(10);
+      const initiateResponse = await fetch('/api/upload/initiate', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            filename: file.name, 
+            contentType: file.type || 'video/quicktime',
+            title: title
+        }),
         credentials: 'include'
       });
-      
-      clearInterval(progressInterval);
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || response.statusText);
+
+      if (!initiateResponse.ok) {
+        const errorText = await initiateResponse.text();
+        throw new Error(`Initiation failed: ${errorText || initiateResponse.statusText}`);
       }
+
+      const initiateData = await initiateResponse.json();
+      uploadUrl = initiateData.uploadUrl;
+      gcsPath = initiateData.gcsPath;
+      
+      if (!uploadUrl || !gcsPath) {
+          throw new Error('Server did not return a valid upload URL or GCS path.');
+      }
+
+      setUploadProgress(30);
+      setUploadStatusMessage('Uploading to storage...');
+      
+      const gcsUploadResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'video/quicktime' },
+        body: file,
+      });
+
+      if (!gcsUploadResponse.ok) {
+        const errorText = await gcsUploadResponse.text();
+        throw new Error(`GCS upload failed: ${errorText || gcsUploadResponse.statusText}`);
+      }
+      
+      setUploadProgress(70);
+      setUploadStatusMessage('Finalizing workflow creation...');
+
+      const createWorkflowResponse = await fetch('/api/workflow/create', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ 
+             gcsPath: gcsPath,
+             title: title,
+         }),
+         credentials: 'include'
+      });
+
+      if (!createWorkflowResponse.ok) {
+        const errorText = await createWorkflowResponse.text();
+        throw new Error(`Workflow creation failed: ${errorText || createWorkflowResponse.statusText}`);
+      }
+
+      const workflowData = await createWorkflowResponse.json();
       
       setUploadProgress(100);
       setUploadSuccess(true);
-      
-      const data = await response.json();
-      setWorkflowId(data.workflowId);
+      setUploading(false);
+      setWorkflowId(workflowData.id);
+      setUploadStatusMessage('Upload complete!');
       
       toast({
         title: "Success",
-        description: "File uploaded successfully!",
+        description: "File uploaded and workflow created!",
         variant: "default"
       });
+
     } catch (error) {
-      console.error('Error uploading file:', error);
-      setValidationError(error instanceof Error ? error.message : 'Upload failed');
+      console.error('Error during upload process:', error);
+      setValidationError(error instanceof Error ? error.message : 'Upload process failed');
       setUploading(false);
+      setUploadSuccess(false);
+      setUploadProgress(0);
+      setUploadStatusMessage('Upload failed.');
       
       toast({
         title: "Error",
@@ -170,20 +219,27 @@ export const FileUpload = () => {
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-8">
-        {/* Upload Component */}
         <div 
-          className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors ${
+          className={`border-2 border-dashed rounded-lg p-12 text-center transition-colors relative ${
             isDragging ? 'border-primary bg-blue-50' : 'border-gray-300'
-          } ${uploading || uploadSuccess ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}
-          onClick={handleUploadClick}
-          onDragEnter={handleDragEnter}
-          onDragLeave={handleDragLeave}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
+          } ${uploading || uploadSuccess ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+          onClick={!uploading && !uploadSuccess ? handleUploadClick : undefined} 
+          onDragEnter={!uploading && !uploadSuccess ? handleDragEnter : undefined}
+          onDragLeave={!uploading && !uploadSuccess ? handleDragLeave : undefined}
+          onDragOver={!uploading && !uploadSuccess ? handleDragOver : undefined}
+          onDrop={!uploading && !uploadSuccess ? handleDrop : undefined}
         >
+          {(uploading || uploadSuccess) && (
+              <div className="absolute inset-0 bg-white bg-opacity-75 flex flex-col items-center justify-center z-10 rounded-lg">
+              </div>
+          )}
+          
           <Upload className="mx-auto h-12 w-12 text-gray-400" />
           <div className="mt-4 flex text-sm text-gray-600 justify-center">
-            <label htmlFor="file-upload" className="relative cursor-pointer bg-white rounded-md font-medium text-primary hover:text-blue-600 focus-within:outline-none">
+            <label 
+               htmlFor={!uploading && !uploadSuccess ? "file-upload" : undefined} 
+               className={`relative bg-white rounded-md font-medium text-primary ${!uploading && !uploadSuccess ? 'hover:text-blue-600 cursor-pointer' : 'cursor-default'} focus-within:outline-none`}
+            >
               <span>Upload a file</span>
               <input 
                 id="file-upload" 
@@ -193,6 +249,7 @@ export const FileUpload = () => {
                 className="sr-only" 
                 accept=".mov"
                 onChange={handleFileInputChange}
+                disabled={uploading || uploadSuccess}
               />
             </label>
             <p className="pl-1">or drag and drop</p>
@@ -212,58 +269,59 @@ export const FileUpload = () => {
                   uploadFile();
                 }}
               >
-                Upload
+                Start Upload
               </Button>
             </div>
           )}
         </div>
 
-        {/* Progress indicator */}
-        {uploading && (
-          <div className="mt-6">
-            <div className="flex justify-between mb-1">
-              <span className="text-sm font-medium text-gray-700">Uploading...</span>
-              <span className="text-sm font-medium text-gray-700">{uploadProgress}%</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2.5">
-              <div 
-                className="bg-primary h-2.5 rounded-full" 
-                style={{ width: `${uploadProgress}%` }}
-              ></div>
-            </div>
-          </div>
-        )}
-
-        {/* Validation Feedback */}
-        {validationError && (
-          <div className="mt-4 bg-red-50 border-l-4 border-red-400 p-4">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <AlertCircle className="h-5 w-5 text-red-400" />
-              </div>
-              <div className="ml-3">
-                <p className="text-sm text-red-700">
-                  {validationError}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Successfully Uploaded */}
-        {uploadSuccess && (
-          <div className="mt-4 bg-green-50 border-l-4 border-green-400 p-4">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <Check className="h-5 w-5 text-green-400" />
-              </div>
-              <div className="ml-3">
-                <p className="text-sm text-green-700">
-                  File successfully uploaded! Click 'Process Workflow' to continue.
-                </p>
-              </div>
-            </div>
-          </div>
+        {(uploading || validationError || uploadSuccess) && (
+           <div className="mt-6">
+             {uploading && (
+               <>
+                 <div className="flex justify-between mb-1">
+                   <span className="text-sm font-medium text-gray-700">{uploadStatusMessage}</span>
+                   <span className="text-sm font-medium text-gray-700">{uploadProgress}%</span>
+                 </div>
+                 <div className="w-full bg-gray-200 rounded-full h-2.5">
+                   <div 
+                     className="bg-primary h-2.5 rounded-full transition-width duration-300 ease-linear" 
+                     style={{ width: `${uploadProgress}%` }}
+                   ></div>
+                 </div>
+               </>
+             )}
+             
+             {validationError && !uploading && (
+               <div className="mt-4 bg-red-50 border-l-4 border-red-400 p-4">
+                 <div className="flex">
+                   <div className="flex-shrink-0">
+                     <AlertCircle className="h-5 w-5 text-red-400" />
+                   </div>
+                   <div className="ml-3">
+                     <p className="text-sm text-red-700">
+                       {validationError}
+                     </p>
+                   </div>
+                 </div>
+               </div>
+             )}
+             
+             {uploadSuccess && (
+               <div className="mt-4 bg-green-50 border-l-4 border-green-400 p-4">
+                 <div className="flex">
+                   <div className="flex-shrink-0">
+                     <Check className="h-5 w-5 text-green-400" />
+                   </div>
+                   <div className="ml-3">
+                     <p className="text-sm text-green-700">
+                       {uploadStatusMessage} Click 'Process Workflow' to continue.
+                     </p>
+                   </div>
+                 </div>
+               </div>
+             )}
+           </div>
         )}
       </div>
 
@@ -271,8 +329,8 @@ export const FileUpload = () => {
         <Button 
           size="lg"
           onClick={handleProcessWorkflow}
-          disabled={!uploadSuccess || !workflowId}
-          className={!uploadSuccess || !workflowId ? 'bg-gray-400 cursor-not-allowed' : ''}
+          disabled={!uploadSuccess || !workflowId || uploading}
+          className={!uploadSuccess || !workflowId || uploading ? 'bg-gray-400 cursor-not-allowed' : ''}
         >
           Process Workflow
         </Button>

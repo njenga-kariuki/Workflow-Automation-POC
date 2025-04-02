@@ -1,42 +1,14 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { videoProcessor } from "./services/videoProcessor";
 import { workflowService } from "./services/workflow";
 import { z } from "zod";
-
-// Configure multer for file uploads
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      const uploadDir = path.join(process.cwd(), "uploads");
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-      cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-      cb(
-        null,
-        file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
-      );
-    },
-  }),
-  limits: {
-    fileSize: 300 * 1024 * 1024, // 300MB
-  },
-  fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (ext !== ".mov") {
-      return cb(new Error("Only .mov files are allowed"));
-    }
-    cb(null, true);
-  },
-});
+import { Storage } from '@google-cloud/storage';
+import { v4 as uuidv4 } from 'uuid';
+import { chunkUploadService } from './services/chunkUploadService';
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Health check endpoint
@@ -111,44 +83,135 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Upload video endpoint
   app.post(
-    "/api/upload",
-    upload.single("file"),
+    "/api/upload/initiate",
     async (req: Request, res: Response) => {
       try {
-        if (!req.file) {
-          return res.status(400).json({ message: "No file uploaded" });
+        // 1. Validate request body
+        const { filename, contentType, title } = req.body;
+        if (!filename || !contentType) {
+          return res.status(400).json({ message: "Missing filename or contentType in request body" });
+        }
+        
+        // Optional: Add more robust validation (e.g., allowed content types)
+        if (!contentType.startsWith('video/')) {
+             console.warn(`Received non-video contentType: ${contentType}. Allowing for now.`);
         }
 
-        // Get file path from multer
-        const videoPath = req.file.path;
+        // 2. Get GCS configuration from environment variables
+        const gcsBucketName = process.env.GCS_BUCKET_NAME;
+        const credentialsJsonString = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
 
-        // Validate video
-        const validationResult = await videoProcessor.validateVideo(videoPath);
-        if (!validationResult.isValid) {
-          // Remove invalid file
-          fs.unlinkSync(videoPath);
-          return res
-            .status(400)
-            .json({ message: validationResult.message || "Invalid video file" });
+        if (!gcsBucketName) {
+          console.error("GCS_BUCKET_NAME environment variable not set.");
+          return res.status(500).json({ message: "Server configuration error: Missing GCS bucket name." });
+        }
+        if (!credentialsJsonString) {
+           console.error("GOOGLE_APPLICATION_CREDENTIALS_JSON environment variable not set.");
+           return res.status(500).json({ message: "Server configuration error: Missing GCS credentials." });
         }
 
-        // Create new workflow record
-        const workflow = await storage.createWorkflow({
-          userId: 1, // Default user for POC
-          title: req.body.title || "Untitled Workflow",
-          videoPath: videoPath,
+        let googleCredentials: Record<string, any> | undefined = undefined;
+        try {
+            googleCredentials = JSON.parse(credentialsJsonString);
+        } catch (e) {
+            console.error("Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON.", e);
+            return res.status(500).json({ message: "Server configuration error: Invalid GCS credentials format." });
+        }
+
+        // 3. Instantiate GCS client
+        const storageClient = new Storage({ credentials: googleCredentials });
+
+        // 4. Define GCS object details
+        const uniqueSuffix = uuidv4();
+        const sanitizedFilename = filename.replace(/[^a-zA-Z0-9_.-]/g, '_'); // Basic sanitization
+        const gcsObjectName = `uploads/${uniqueSuffix}-${sanitizedFilename}`; // Store in an 'uploads' virtual folder
+        const gcsPath = `gs://${gcsBucketName}/${gcsObjectName}`;
+        
+        // 5. Define Presigned URL options
+        const options = {
+          version: 'v4' as const, // Ensure 'v4' is treated as a literal type
+          action: 'write' as const, // Ensure 'write' is treated as a literal type
+          expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+          contentType: contentType, // Set content type for the upload
+        };
+
+        // 6. Generate the Presigned URL
+        console.log(`Generating V4 presigned URL for: ${gcsPath} with contentType: ${contentType}`);
+        const [uploadUrl] = await storageClient
+          .bucket(gcsBucketName)
+          .file(gcsObjectName)
+          .getSignedUrl(options);
+          
+        console.log(`Successfully generated V4 presigned URL.`);
+
+        // 7. Return URL and GCS Path to client
+        // The client will use 'uploadUrl' to PUT the file.
+        // 'gcsPath' can be stored by the client and sent later
+        // to another endpoint (e.g., /api/workflow/create) to create the workflow record.
+        res.status(200).json({
+          uploadUrl: uploadUrl,
+          gcsPath: gcsPath,
+          // Optionally, create a preliminary workflow record here if desired,
+          // or have the client call another endpoint after successful upload.
+          // For now, just returning the URL.
+          // Example of creating workflow record (requires title, userId):
+          // const preliminaryWorkflow = await storage.createWorkflow({
+          //   userId: 1, // Get actual user ID from request context
+          //   title: title || 'Untitled Upload',
+          //   videoPath: gcsPath, // Store GCS path instead of local path
+          //   status: 'uploading', // Indicate it's not ready yet
+          // });
+          // workflowId: preliminaryWorkflow.id // Return ID if created
         });
 
-        res.status(201).json({
-          message: "Video uploaded successfully",
-          workflowId: workflow.id,
-        });
       } catch (error) {
-        console.error("Error uploading video:", error);
-        res.status(500).json({ message: "Error uploading video" });
+        console.error("Error generating presigned URL:", error);
+        res.status(500).json({ message: "Error initiating file upload" });
       }
     }
   );
+
+  // === NEW Endpoint: Create Workflow Record After GCS Upload ===
+  app.post("/api/workflow/create", async (req: Request, res: Response) => {
+    try {
+      // 1. Validate request body
+      // Assuming userId comes from authentication middleware in a real app
+      // For now, defaulting to 1 or expecting it in the body
+      const { gcsPath, title, userId = 1 } = req.body; 
+      
+      if (!gcsPath || !title) {
+        return res.status(400).json({ message: "Missing gcsPath or title in request body" });
+      }
+
+      // Basic validation of gcsPath format
+      if (!gcsPath.startsWith('gs://')) {
+         return res.status(400).json({ message: "Invalid gcsPath format. Must start with gs://" });
+      }
+
+      // 2. Create workflow record using the GCS path
+      const workflow = await storage.createWorkflow({
+        userId: Number(userId),
+        title: title,
+        videoPath: gcsPath, // Store the GCS path
+        // status: 'uploaded', // Removed: Status is set internally by createWorkflow
+      });
+
+      console.log(`Created workflow ${workflow.id} (status: ${workflow.status}) for GCS path: ${gcsPath}`);
+
+      // 3. Optionally, trigger processing immediately or let client decide
+      // workflowService.processWorkflow(workflow.id).catch(err => { ... });
+
+      // 4. Return the created workflow details
+      res.status(201).json(workflow);
+
+    } catch (error) {
+      console.error("Error creating workflow:", error);
+      // More specific error handling might be needed based on storage errors
+      res.status(500).json({ message: "Error creating workflow record" });
+    }
+  });
+
+  // === End of NEW Endpoint ===
 
   // Start workflow processing
   app.post("/api/workflow/:id/process", async (req, res) => {
@@ -184,8 +247,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Workflow not found" });
       }
 
-      const status = await workflowService.getWorkflowStatus(workflowId);
-      res.json(status);
+      res.json(workflow);
     } catch (error) {
       console.error("Error getting workflow status:", error);
       res.status(500).json({ message: "Error getting workflow status" });

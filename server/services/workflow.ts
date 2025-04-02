@@ -4,26 +4,82 @@ import { videoProcessor } from './videoProcessor';
 import { aiService } from './aiService';
 import fs from 'fs'; // Import fs for cleanup
 import path from 'path'; // Import path
+import { Storage } from '@google-cloud/storage'; // Added
+import os from 'os'; // Added for temp directory
+import { v4 as uuidv4 } from 'uuid'; // Added for unique temp filenames
 
 export class WorkflowService {
+  private storageClient: Storage | null = null; // Added GCS client instance
+
+  constructor() {
+    // Initialize GCS client if credentials are available
+    const credentialsJsonString = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    if (credentialsJsonString) {
+      try {
+        const googleCredentials = JSON.parse(credentialsJsonString);
+        this.storageClient = new Storage({ credentials: googleCredentials });
+        console.log("WorkflowService: GCS Storage client initialized.");
+      } catch (e) {
+        console.error("WorkflowService: Failed to parse GCS credentials. GCS operations will fail.", e);
+      }
+    } else {
+       console.warn("WorkflowService: GOOGLE_APPLICATION_CREDENTIALS_JSON not set. Cannot download GCS files.");
+    }
+  }
+  
   async processWorkflow(workflowId: number): Promise<boolean> {
     let tempFrameDir: string | null = null; // Variable to hold temp dir path
     let tempAudioPath: string | null = null; // Variable to hold temp audio path
+    let localVideoPath: string | null = null; // Path to the video file on local disk (original or downloaded)
+    let shouldCleanupLocalVideo = false; // Flag to indicate if localVideoPath needs cleanup
     
     try {
       // Get workflow data
       const workflow = await storage.getWorkflow(workflowId);
       if (!workflow || !workflow.videoPath) {
-        console.error(`Workflow not found or invalid: ${workflowId}`);
+        console.error(`Workflow not found or invalid video path: ${workflowId}`);
         return false;
       }
       
       // Update status to processing
       await storage.updateWorkflowStatus(workflowId, 'processing');
       
+      // --- Determine Video Path (Local or GCS) ---
+      if (workflow.videoPath.startsWith('gs://')) {
+        if (!this.storageClient) {
+          throw new Error("GCS Storage client not initialized. Cannot process GCS path.");
+        }
+        console.log(`Processing GCS video path: ${workflow.videoPath}`);
+        const gcsPath = workflow.videoPath;
+        const bucketName = gcsPath.split('/')[2];
+        const objectName = gcsPath.split('/').slice(3).join('/');
+        
+        // Create a temporary local path for download
+        const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'workflow-video-'));
+        localVideoPath = path.join(tempDir, `${uuidv4()}-${path.basename(objectName)}`);
+        shouldCleanupLocalVideo = true; // Mark for cleanup
+
+        console.log(`Downloading ${gcsPath} to temporary path ${localVideoPath}...`);
+        await this.storageClient.bucket(bucketName).file(objectName).download({ destination: localVideoPath });
+        console.log(`Successfully downloaded GCS video to ${localVideoPath}.`);
+        
+      } else {
+        // Assume it's already a local path
+        console.log(`Processing local video path: ${workflow.videoPath}`);
+        localVideoPath = workflow.videoPath;
+        // Do NOT clean up if it was originally a local path provided by the user/system
+        shouldCleanupLocalVideo = false; 
+      }
+      // --- End Video Path Determination ---
+      
+      // Ensure we have a local path to work with
+      if (!localVideoPath) {
+         throw new Error("Could not determine local video path for processing.");
+      }
+      
       // Step 1: Video processing
-      console.log(`Starting video processing for workflow ${workflowId}`);
-      const validationResult = await videoProcessor.validateVideo(workflow.videoPath);
+      console.log(`Starting video processing for workflow ${workflowId} using ${localVideoPath}`);
+      const validationResult = await videoProcessor.validateVideo(localVideoPath);
       
       if (!validationResult.isValid) {
         await storage.updateWorkflowStatus(workflowId, 'failed');
@@ -31,10 +87,10 @@ export class WorkflowService {
         return false;
       }
       
-      const processedVideoPath = await videoProcessor.preprocessVideo(workflow.videoPath);
+      const processedVideoPath = await videoProcessor.preprocessVideo(localVideoPath);
       
       // --- Extract Frames and Audio Concurrently ---
-      console.log(`Starting frame and audio extraction for workflow ${workflowId}`);
+      console.log(`Starting frame and audio extraction for workflow ${workflowId} from ${processedVideoPath}`);
       let framePaths: string[] = [];
       let audioTranscript: string = '';
 
@@ -109,6 +165,16 @@ export class WorkflowService {
     } finally {
       // Cleanup: Always attempt to remove the temporary directories/files
       const cleanupPromises = [];
+      if (shouldCleanupLocalVideo && localVideoPath) {
+          console.log(`Attempting final cleanup of downloaded temporary video: ${localVideoPath}`);
+          // Delete the containing directory created by mkdtemp
+          const containingDir = path.dirname(localVideoPath);
+          cleanupPromises.push(
+            fs.promises.rm(containingDir, { recursive: true, force: true })
+                .then(() => console.log(`Successfully removed temporary video directory: ${containingDir}`))
+                .catch(cleanupError => console.error(`Error removing temporary video directory ${containingDir}:`, cleanupError))
+          );
+      }
       if (tempFrameDir) {
         console.log(`Attempting final cleanup of temporary frame directory: ${tempFrameDir}`);
         cleanupPromises.push(
