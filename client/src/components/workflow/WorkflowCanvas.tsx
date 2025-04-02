@@ -12,7 +12,9 @@ import ReactFlow, {
   Panel,
   NodeMouseHandler,
   NodeProps,
-  Background
+  Background,
+  Handle,
+  Position
 } from "reactflow";
 import "reactflow/dist/style.css";
 import { Block, BlockType, Connection } from "@shared/schema";
@@ -67,8 +69,11 @@ const CustomBlockNode = ({ data }: NodeProps<Block>) => {
     <div className={cn(
       styles.bg, 
       styles.border, 
-      "border rounded-lg p-4 w-64 shadow-sm"
+      "border rounded-lg p-4 w-64 shadow-sm relative"
     )}>
+      <Handle type="target" position={Position.Left} className="!bg-gray-400" />
+      <Handle type="source" position={Position.Right} className="!bg-gray-400" />
+      
       <div className="flex items-center mb-2">
         <div className={`h-6 w-6 rounded-full ${styles.iconBg} flex items-center justify-center`}>
           {styles.icon}
@@ -134,7 +139,6 @@ export const WorkflowCanvas = ({
         id: `edge-${connection.sourceBlockId}-${connection.targetBlockId}`,
         source: connection.sourceBlockId,
         target: connection.targetBlockId,
-        label: connection.dataType,
         type: 'smoothstep',
         animated: connection.updateRules === 'onSourceChange',
         markerEnd: {

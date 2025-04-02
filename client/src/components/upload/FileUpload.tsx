@@ -154,7 +154,8 @@ export const FileUpload = () => {
           'Content-Length': '0',
           'X-Upload-Content-Type': file.type || 'video/quicktime',
           'X-Upload-Content-Length': file.size.toString(),
-          'Origin': window.location.origin
+          'Origin': window.location.origin,
+          'x-goog-resumable': 'start'
         },
       });
 

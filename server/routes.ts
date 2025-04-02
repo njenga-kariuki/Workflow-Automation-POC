@@ -231,16 +231,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const workflowId = parseInt(req.params.id);
       
-      // Check if workflow exists
-      const workflow = await storage.getWorkflow(workflowId);
-      if (!workflow) {
-        return res.status(404).json({ message: "Workflow not found" });
-      }
+      // Check if workflow exists first (optional but good practice)
+      // const workflow = await storage.getWorkflow(workflowId); 
+      // if (!workflow) { 
+      //   return res.status(404).json({ message: "Workflow not found" });
+      // }
 
-      res.json(workflow);
+      // Get status data from the service
+      const statusData = await workflowService.getWorkflowStatus(workflowId);
+      
+      // *** ADDED LOGGING ***
+      // console.log(`DEBUG: Returning status for workflow ${workflowId}:`, JSON.stringify(statusData));
+      
+      // Return the status data
+      res.json(statusData);
+
     } catch (error) {
-      console.error("Error getting workflow status:", error);
-      res.status(500).json({ message: "Error getting workflow status" });
+      console.error(`Error getting workflow status for ID ${req.params.id}:`, error);
+      // Ensure a proper error structure is returned
+      res.status(500).json({ message: `Error getting workflow status: ${error instanceof Error ? error.message : 'Unknown error'}` });
     }
   });
 

@@ -151,6 +151,22 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
     return "processing";
   };
   
+  // Add a loading state check at the beginning of the return
+  if (!status) {
+    return (
+      <div className="max-w-3xl mx-auto">
+        <div className="text-center mb-12">
+          <h1 className="text-3xl font-bold text-gray-900">Processing Your Workflow</h1>
+          <p className="mt-2 text-lg text-gray-600">Loading status...</p>
+        </div>
+        <div className="bg-white rounded-lg shadow-sm p-8 text-center">
+          <Loader2 className="h-12 w-12 animate-spin mx-auto text-gray-400" />
+        </div>
+      </div>
+    );
+  }
+  
+  // If status is not null, proceed with rendering the detailed view
   return (
     <div className="max-w-3xl mx-auto">
       <div className="text-center mb-12">
@@ -163,12 +179,12 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
         <div className="mb-8">
           <div className="flex justify-between mb-1">
             <span className="text-lg font-medium text-gray-700">Overall Progress</span>
-            <span className="text-lg font-medium text-gray-700">{status?.progress.overall || 0}%</span>
+            <span className="text-lg font-medium text-gray-700">{status?.progress?.overall || 0}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-4">
             <div 
               className="bg-primary h-4 rounded-full" 
-              style={{ width: `${status?.progress.overall || 0}%` }}
+              style={{ width: `${status?.progress?.overall || 0}%` }}
             ></div>
           </div>
           <p className="mt-2 text-sm text-gray-500">
@@ -183,15 +199,15 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
             <div className="flex items-center">
               <div className="flex-shrink-0">
                 <div className={`flex items-center justify-center h-8 w-8 rounded-full ${
-                  getStepStatus(status?.progress.videoProcessing || 0) === "completed" 
+                  getStepStatus(status?.progress?.videoProcessing || 0) === "completed" 
                     ? "bg-green-100 text-green-500"
-                    : getStepStatus(status?.progress.videoProcessing || 0) === "processing"
+                    : getStepStatus(status?.progress?.videoProcessing || 0) === "processing"
                     ? "bg-blue-100 text-blue-500"
                     : "bg-gray-100 text-gray-400"
                 }`}>
-                  {getStepStatus(status?.progress.videoProcessing || 0) === "completed" ? (
+                  {getStepStatus(status?.progress?.videoProcessing || 0) === "completed" ? (
                     <CheckCircle2 className="h-5 w-5" />
-                  ) : getStepStatus(status?.progress.videoProcessing || 0) === "processing" ? (
+                  ) : getStepStatus(status?.progress?.videoProcessing || 0) === "processing" ? (
                     <Loader2 className="h-5 w-5 animate-spin" />
                   ) : (
                     <span className="h-5 w-5 text-center text-sm font-medium">1</span>
@@ -201,16 +217,16 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
               <div className="ml-3 w-full">
                 <div className="flex justify-between">
                   <h3 className="text-sm font-medium text-gray-900">Video Processing</h3>
-                  <span className="text-sm font-medium text-gray-500">{status?.progress.videoProcessing || 0}%</span>
+                  <span className="text-sm font-medium text-gray-500">{status?.progress?.videoProcessing || 0}%</span>
                 </div>
                 <div className="mt-1.5 w-full bg-gray-200 rounded-full h-2">
                   <div 
                     className={`h-2 rounded-full ${
-                      getStepStatus(status?.progress.videoProcessing || 0) === "completed"
+                      getStepStatus(status?.progress?.videoProcessing || 0) === "completed"
                         ? "bg-green-500"
                         : "bg-blue-500"
                     }`}
-                    style={{ width: `${status?.progress.videoProcessing || 0}%` }}
+                    style={{ width: `${status?.progress?.videoProcessing || 0}%` }}
                   ></div>
                 </div>
               </div>
@@ -222,15 +238,15 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
             <div className="flex items-center">
               <div className="flex-shrink-0">
                 <div className={`flex items-center justify-center h-8 w-8 rounded-full ${
-                  getStepStatus(status?.progress.rawExtraction || 0) === "completed" 
+                  getStepStatus(status?.progress?.rawExtraction || 0) === "completed" 
                     ? "bg-green-100 text-green-500"
-                    : getStepStatus(status?.progress.rawExtraction || 0) === "processing"
+                    : getStepStatus(status?.progress?.rawExtraction || 0) === "processing"
                     ? "bg-blue-100 text-blue-500"
                     : "bg-gray-100 text-gray-400"
                 }`}>
-                  {getStepStatus(status?.progress.rawExtraction || 0) === "completed" ? (
+                  {getStepStatus(status?.progress?.rawExtraction || 0) === "completed" ? (
                     <CheckCircle2 className="h-5 w-5" />
-                  ) : getStepStatus(status?.progress.rawExtraction || 0) === "processing" ? (
+                  ) : getStepStatus(status?.progress?.rawExtraction || 0) === "processing" ? (
                     <Loader2 className="h-5 w-5 animate-spin" />
                   ) : (
                     <span className="h-5 w-5 text-center text-sm font-medium">2</span>
@@ -240,16 +256,16 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
               <div className="ml-3 w-full">
                 <div className="flex justify-between">
                   <h3 className="text-sm font-medium text-gray-900">Gemini 2.0 Raw Extraction</h3>
-                  <span className="text-sm font-medium text-gray-500">{status?.progress.rawExtraction || 0}%</span>
+                  <span className="text-sm font-medium text-gray-500">{status?.progress?.rawExtraction || 0}%</span>
                 </div>
                 <div className="mt-1.5 w-full bg-gray-200 rounded-full h-2">
                   <div 
                     className={`h-2 rounded-full ${
-                      getStepStatus(status?.progress.rawExtraction || 0) === "completed"
+                      getStepStatus(status?.progress?.rawExtraction || 0) === "completed"
                         ? "bg-green-500"
                         : "bg-blue-500"
                     }`}
-                    style={{ width: `${status?.progress.rawExtraction || 0}%` }}
+                    style={{ width: `${status?.progress?.rawExtraction || 0}%` }}
                   ></div>
                 </div>
               </div>
@@ -261,15 +277,15 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
             <div className="flex items-center">
               <div className="flex-shrink-0">
                 <div className={`flex items-center justify-center h-8 w-8 rounded-full ${
-                  getStepStatus(status?.progress.organization || 0) === "completed" 
+                  getStepStatus(status?.progress?.organization || 0) === "completed" 
                     ? "bg-green-100 text-green-500"
-                    : getStepStatus(status?.progress.organization || 0) === "processing"
+                    : getStepStatus(status?.progress?.organization || 0) === "processing"
                     ? "bg-blue-100 text-blue-500"
                     : "bg-gray-100 text-gray-400"
                 }`}>
-                  {getStepStatus(status?.progress.organization || 0) === "completed" ? (
+                  {getStepStatus(status?.progress?.organization || 0) === "completed" ? (
                     <CheckCircle2 className="h-5 w-5" />
-                  ) : getStepStatus(status?.progress.organization || 0) === "processing" ? (
+                  ) : getStepStatus(status?.progress?.organization || 0) === "processing" ? (
                     <Loader2 className="h-5 w-5 animate-spin" />
                   ) : (
                     <span className="h-5 w-5 text-center text-sm font-medium">3</span>
@@ -279,16 +295,16 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
               <div className="ml-3 w-full">
                 <div className="flex justify-between">
                   <h3 className="text-sm font-medium text-gray-900">Claude 3.7 Organization</h3>
-                  <span className="text-sm font-medium text-gray-500">{status?.progress.organization || 0}%</span>
+                  <span className="text-sm font-medium text-gray-500">{status?.progress?.organization || 0}%</span>
                 </div>
                 <div className="mt-1.5 w-full bg-gray-200 rounded-full h-2">
                   <div 
                     className={`h-2 rounded-full ${
-                      getStepStatus(status?.progress.organization || 0) === "completed"
+                      getStepStatus(status?.progress?.organization || 0) === "completed"
                         ? "bg-green-500"
                         : "bg-blue-500"
                     }`}
-                    style={{ width: `${status?.progress.organization || 0}%` }}
+                    style={{ width: `${status?.progress?.organization || 0}%` }}
                   ></div>
                 </div>
               </div>
@@ -300,15 +316,15 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
             <div className="flex items-center">
               <div className="flex-shrink-0">
                 <div className={`flex items-center justify-center h-8 w-8 rounded-full ${
-                  getStepStatus(status?.progress.blockGeneration || 0) === "completed" 
+                  getStepStatus(status?.progress?.blockGeneration || 0) === "completed" 
                     ? "bg-green-100 text-green-500"
-                    : getStepStatus(status?.progress.blockGeneration || 0) === "processing"
+                    : getStepStatus(status?.progress?.blockGeneration || 0) === "processing"
                     ? "bg-blue-100 text-blue-500"
                     : "bg-gray-100 text-gray-400"
                 }`}>
-                  {getStepStatus(status?.progress.blockGeneration || 0) === "completed" ? (
+                  {getStepStatus(status?.progress?.blockGeneration || 0) === "completed" ? (
                     <CheckCircle2 className="h-5 w-5" />
-                  ) : getStepStatus(status?.progress.blockGeneration || 0) === "processing" ? (
+                  ) : getStepStatus(status?.progress?.blockGeneration || 0) === "processing" ? (
                     <Loader2 className="h-5 w-5 animate-spin" />
                   ) : (
                     <span className="h-5 w-5 text-center text-sm font-medium">4</span>
@@ -318,16 +334,16 @@ export const ProcessingStatus = ({ workflowId }: ProcessingStatusProps) => {
               <div className="ml-3 w-full">
                 <div className="flex justify-between">
                   <h3 className="text-sm font-medium text-gray-900">Claude 3.7 Block Structure Generation</h3>
-                  <span className="text-sm font-medium text-gray-500">{status?.progress.blockGeneration || 0}%</span>
+                  <span className="text-sm font-medium text-gray-500">{status?.progress?.blockGeneration || 0}%</span>
                 </div>
                 <div className="mt-1.5 w-full bg-gray-200 rounded-full h-2">
                   <div 
                     className={`h-2 rounded-full ${
-                      getStepStatus(status?.progress.blockGeneration || 0) === "completed"
+                      getStepStatus(status?.progress?.blockGeneration || 0) === "completed"
                         ? "bg-green-500"
                         : "bg-blue-500"
                     }`}
-                    style={{ width: `${status?.progress.blockGeneration || 0}%` }}
+                    style={{ width: `${status?.progress?.blockGeneration || 0}%` }}
                   ></div>
                 </div>
               </div>
