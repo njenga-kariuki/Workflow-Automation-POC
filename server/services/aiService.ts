@@ -1,5 +1,6 @@
 import { BlockStructure, BlockType, SourceType, UpdateRule } from '@shared/schema';
 import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -36,17 +37,23 @@ interface OrganizedWorkflow {
 
 export class AIService {
   private anthropicClient: Anthropic;
+  private geminiClient: GoogleGenerativeAI;
   private anthropicAPIKey: string;
+  private geminiAPIKey: string;
   
   constructor() {
     this.anthropicAPIKey = process.env.ANTHROPIC_API_KEY || '';
+    this.geminiAPIKey = process.env.GOOGLE_AI_API_KEY || '';
+    
     this.anthropicClient = new Anthropic({
       apiKey: this.anthropicAPIKey,
     });
+    
+    this.geminiClient = new GoogleGenerativeAI(this.geminiAPIKey);
   }
   
   validateAPIKeys(): boolean {
-    return Boolean(this.anthropicAPIKey);
+    return Boolean(this.anthropicAPIKey) && Boolean(this.geminiAPIKey);
   }
   
   // Helper method to safely extract text from the Anthropic response
@@ -79,60 +86,57 @@ export class AIService {
     framePaths: string[], 
     audioTranscript?: string
   ): Promise<RawWorkflowExtraction> {
-    console.log(`Extracting raw workflow from video: ${videoPath} with ${framePaths.length} frames`);
-    
-    // For this POC, we will use a simplified approach
-    // In a production version, you would use Gemini for multimodal analysis of frames and audio
-    
-    // For now, we'll use a sample extraction with Claude to show how it would work
-    // but in a production environment, we'd use Gemini to process the video frames
+    console.log(`Extracting raw workflow from video: ${videoPath} with ${framePaths.length} frames using Gemini`);
     
     // Select a subset of frames for demonstration purposes
     const sampleFrames = framePaths.length > 3 ? 
       [framePaths[0], framePaths[Math.floor(framePaths.length / 2)], framePaths[framePaths.length - 1]] : 
       framePaths;
     
-    // Process sample frames with Claude
+    // Process sample frames with Gemini 2.0 Flash
     const frameDescriptions = await Promise.all(sampleFrames.map(async (framePath, index) => {
       try {
         // Convert image to base64
         const imageBuffer = fs.readFileSync(framePath);
-        const base64Image = imageBuffer.toString('base64');
         
-        // Call Claude API to describe the image
-        const response = await this.anthropicClient.messages.create({
-          model: "claude-3-7-sonnet-20250219", // the newest Anthropic model is "claude-3-7-sonnet-20250219" which was released February 24, 2025
-          max_tokens: 1000,
-          messages: [
+        // Get the Gemini model
+        const geminiVisionModel = this.geminiClient.getGenerativeModel({ 
+          model: "gemini-2.0-flash",
+          safetySettings: [
             {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: "Describe what's happening in this screen capture from a workflow recording. Focus on what application is being used, what data is visible, and what actions seem to be taking place."
-                },
-                {
-                  type: "image",
-                  source: {
-                    type: "base64",
-                    media_type: "image/jpeg",
-                    data: base64Image
-                  }
-                }
-              ]
+              category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+              threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            },
+            {
+              category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+              threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH,
             }
           ]
         });
         
-        // Safely extract text content
-        const description = this.extractTextFromResponse(response.content);
+        // Create a file part
+        const filePart = {
+          inlineData: {
+            data: imageBuffer.toString('base64'),
+            mimeType: 'image/jpeg'
+          }
+        };
+        
+        // Call Gemini API to describe the image
+        const result = await geminiVisionModel.generateContent([
+          "Describe what's happening in this screen capture from a workflow recording. Focus on what application is being used, what data is visible, and what actions seem to be taking place.",
+          filePart
+        ]);
+        
+        const response = result.response;
+        const description = response.text();
         
         return {
           frameIndex: index,
           description
         };
       } catch (error) {
-        console.error(`Error processing frame ${framePath}:`, error);
+        console.error(`Error processing frame ${framePath} with Gemini:`, error);
         return {
           frameIndex: index,
           description: `Error processing frame ${index}`
