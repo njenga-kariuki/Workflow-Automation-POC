@@ -1,0 +1,46 @@
+Core Requirements
+1. Landing Page
+Visually appealing, simple landing page with clear value proposition
+Headline: "Show us once, never do it again"
+Subheadline focusing on repeated workflow problems
+Three-step process visualization: Record → Process → Automate
+Prominent "Get Started" button
+2. Recording Instructions Page
+Clear step-by-step instructions for recording workflow with audio
+Focus on macOS/QuickTime recording
+Guidelines for effective recording (application focus, clear audio, time limits)
+3. Video Upload Component
+Drag-and-drop interface for file upload
+Support for .mov (QuickTime) format
+File validation (format, size, duration)
+Upload progress indicator
+Error handling and feedback
+4. Video Processing Pipeline
+Secure video file handling
+Basic preprocessing of uploaded videos
+Unique workflow ID generation
+Processing job queue management
+5. AI-Powered Analysis Pipeline
+Integration with Gemini 2.0 Flash for raw workflow extraction
+Integration with Claude 3.5 for workflow organization
+Structured JSON output generation
+6. Block Structure Generation
+Claude 3.5 integration for block-based representation
+Formal JSON structure following Data Jaw's architecture
+7. Interactive Workflow Viewer
+Visual rendering of blocks, sources, and connections
+Color-coding by block type
+Navigation capabilities (zoom, pan)
+Basic editing functionality
+Export options (PDF, PNG)
+"Run Workflow" and "Save Workflow" buttons (simulated for PoC)
+8. Processing Status UI
+Clear visualization of processing stages
+Progress indicators for each step
+Estimated time remaining
+Error handling with retry options
+Technical Implementation
+Frontend: React with TypeScript, Tailwind CSS, React Flow for diagrams
+Backend: Express.js, AI API integrations (Google Gemini, Anthropic Claude)
+Data handling: Server-side in-memory storage for the MVP
+This PoC will demonstrate Data Jaw's core value proposition of "Show us once, never do it again" by capturing user workflows via video recording and transforming them into interactive, editable block-based diagrams.
