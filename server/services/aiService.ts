@@ -1,4 +1,4 @@
-import { BlockStructure, BlockType, SourceType, UpdateRule } from '@shared/schema';
+import { BlockStructure, BlockIntent, SourceType, UpdateRule } from '@shared/schema';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
 import { SpeechClient } from '@google-cloud/speech';
@@ -16,21 +16,24 @@ interface RawWorkflowExtraction {
   }[];
 }
 
+interface OrganizedWorkflowStep {
+  number: number;
+  action: string;
+  applications: string[];
+  primaryApplication?: string;
+  input: {
+    data: string;
+    source: string;
+  };
+  output: {
+    data: string;
+    destination: string;
+  };
+  considerations: string[];
+}
+
 interface OrganizedWorkflow {
-  steps: {
-    number: number;
-    action: string;
-    applications: string[];
-    input: {
-      data: string;
-      source: string;
-    };
-    output: {
-      data: string;
-      destination: string;
-    };
-    considerations: string[];
-  }[];
+  steps: OrganizedWorkflowStep[];
   patterns: string[];
   conditionalLogic: string[];
   triggers: string[];
@@ -343,38 +346,45 @@ export class AIService {
     console.log(`Organizing workflow from raw extraction with ${rawExtraction.transcript.length} steps`);
     
     const organizePrompt = `
-    I need to organize and structure a workflow based on a transcript. 
-    
+    Your primary goal is to organize and structure a workflow based on the provided transcript, which includes frame descriptions and user narration.
+    Accurately identify the logical workflow steps, their actions, inputs, outputs, and considerations, maintaining the established level of detail and structure.
+
     Here is the transcript of a workflow recording:
     ${JSON.stringify(rawExtraction.transcript, null, 2)}
-    
-    Based on this transcript, create an organized workflow structure in the following JSON format:
+
+    Based on this transcript, create an organized workflow structure in the following JSON format. Ensure the output strictly adheres to this schema:
     {
       "steps": [
         {
-          "number": number (step number),
-          "action": string (summary of action),
-          "applications": string[] (list of applications used),
+          "number": number (sequential step number starting from 1),
+          "action": string (detailed summary of the primary action performed in this step),
+          "applications": string[] (list *all* applications visible or mentioned during this step),
+          "primaryApplication": string | null (the *single main application* actively used or focused on during this step. Use its common name like 'Microsoft Excel', 'Google Chrome', 'Finder'. If unclear, use null),
           "input": {
-            "data": string (input data description),
-            "source": string (where the data comes from)
+            "data": string (description of the input data for the action),
+            "source": string (where the input data comes from, e.g., application name, specific file, user input)
           },
           "output": {
-            "data": string (output data description),
-            "destination": string (where the data goes)
+            "data": string (description of the output data or result of the action),
+            "destination": string (where the output goes, e.g., application name, specific file, clipboard)
           },
-          "considerations": string[] (list of important considerations for this step)
+          "considerations": string[] (list of important nuances, goals, or context mentioned by the user for this specific step)
         }
+        // ... more steps
       ],
-      "patterns": string[] (list of identified patterns in the workflow),
-      "conditionalLogic": string[] (list of any if/then conditions identified),
-      "triggers": string[] (events that initiate this workflow),
-      "frequency": string (how often this workflow is performed)
+      "patterns": string[] (list of identified recurring patterns or loops in the overall workflow),
+      "conditionalLogic": string[] (list of any explicit if/then conditions mentioned),
+      "triggers": string[] (list of events that typically initiate this workflow),
+      "frequency": string (how often this workflow is performed, e.g., 'daily', 'weekly', 'as needed')
     }
-    
-    Combine similar actions into cohesive steps, identify patterns, and extract any conditional logic.
-    Use your judgment to infer information not explicitly stated in the transcript.
-    Prioritize accurately reflecting the details present in the provided transcript when inferring missing information.
+
+    Instructions:
+    1.  Combine related low-level actions from the transcript into cohesive, logical steps.
+    2.  For each step, meticulously extract the 'action', 'input', 'output', and 'considerations' based *only* on the provided transcript.
+    3.  Populate the 'applications' array with all software mentioned or visually identified in the context of the step.
+    4.  **Critically analyze** the context of each step (action, user focus, narration) to determine the single 'primaryApplication'. This is the application where the core work of the step happens. If multiple applications are involved, choose the one most central to the step's action. If the primary application cannot be determined with high confidence, explicitly use \`null\`.
+    5.  Analyze the overall workflow to identify 'patterns', 'conditionalLogic', 'triggers', and 'frequency'.
+    6.  Ensure the final output is a single, valid JSON object conforming exactly to the specified structure.
     `;
     
     try {
@@ -411,67 +421,32 @@ export class AIService {
   async generateBlockStructure(organizedWorkflow: OrganizedWorkflow): Promise<BlockStructure> {
     console.log(`Generating block structure from organized workflow with ${organizedWorkflow.steps.length} steps`);
     
-    const blockStructurePrompt = `
-    I need to convert an organized workflow into a block-based structure representation.
-    
-    Here is the organized workflow:
-    ${JSON.stringify(organizedWorkflow, null, 2)}
-    
-    Convert this workflow into a block structure with the following format:
-    {
-      "blocks": [
-        {
-          "id": string (unique ID),
-          "type": string (one of: "document", "data", "presentation", "interface"),
-          "title": string (short title),
-          "description": string (detailed description),
-          "properties": object (relevant properties for this block type)
-        }
-      ],
-      "sources": [
-        {
-          "id": string (unique ID),
-          "type": string (one of: "file", "web", "api", "manual"),
-          "location": string (path or URL),
-          "updateRules": string (one of: "onSourceChange", "manual", "scheduled", "onEvent")
-        }
-      ],
-      "connections": [
-        {
-          "sourceBlockId": string (ID of source block),
-          "targetBlockId": string (ID of target block),
-          "dataType": string (type of data being passed),
-          "updateRules": string (one of: "onSourceChange", "manual", "scheduled", "onEvent")
-        }
-      ]
-    }
-    
-    Block types:
-    - "document": For files, documents, or other content
-    - "data": For databases, data processing operations, or data transformations
-    - "presentation": For visualizations, reports, or presentations
-    - "interface": For user interactions, notifications, or system interfaces
-    
-    Source types:
-    - "file": Local or cloud file sources
-    - "web": Web-based sources (URLs, web services)
-    - "api": API-based data sources
-    - "manual": Manually input data
-    
-    Update rules:
-    - "onSourceChange": Update when the source changes
-    - "manual": Only update when manually triggered
-    - "scheduled": Update on a schedule
-    - "onEvent": Update when a specific event occurs
-    
-    Ensure that:
-    1. Each workflow step is represented by at least one block
-    2. Blocks are connected based on data flow in the workflow
-    3. IDs are unique and follow a consistent pattern
-    4. Source information is captured accurately
-    5. Block types are assigned based on the nature of each step
-    `;
-    
+    // Define the available BlockIntent enum values for the prompt
+    const intentValues = Object.values(BlockIntent).join('", "');
+
+    // Enhanced prompt for generateBlockStructure focusing on BlockIntent
+    const blockStructurePrompt = `\n    Your task is to convert the provided 'OrganizedWorkflow' JSON object into the 'BlockStructure' JSON format specified below. \n    Focus on accurately mapping the workflow steps to blocks, determining the correct user intent, and transferring information correctly.\n\n    Here is the organized workflow input:\n    ${JSON.stringify(organizedWorkflow, null, 2)}\n\n    Convert this workflow into the following 'BlockStructure' JSON format. Ensure the output strictly adheres to this schema:\n    {\n      \"blocks\": [\n        {\n          \"id\": string (generate a unique, descriptive ID for each block, e.g., \"step-1-excel-edit\"),\n          \"intent\": string (Assign ONE intent that best describes the primary user action in the step. Choose from: \"${intentValues}\". Analyze the 'action', 'input', 'output', 'primaryApplication' fields to determine the most fitting intent.),\n          \"title\": string (create a concise title. Recommended format: '[Action Summary] in [Primary Application]' if primaryApplication exists, otherwise just '[Action Summary]'),\n          \"description\": string (use the 'action' description from the input step, possibly augmented with 'considerations'),\n          \"properties\": object (keep this empty {} for now),\n          \"applicationName\": string | null (copy the value *directly* from the 'primaryApplication' field of the corresponding input step. If the input field is null or missing, omit this field or set it to null in the output block.)\n        }\n        // ... more blocks corresponding to steps\n      ],\n      \"sources\": [\n        {\n          \"id\": string (unique ID for the source),\n          \"type\": string (one of: \"file\", \"web\", \"api\", \"manual\", infer based on input source description),\n          \"location\": string (path, URL, or description from input source),\n          \"updateRules\": string (default to \"manual\" unless specified otherwise in workflow patterns/triggers)\n        }\n        // ... identify distinct sources from workflow inputs\n      ],\n      \"connections\": [\n        {\n          \"sourceBlockId\": string (ID of the block providing the data),\n          \"targetBlockId\": string (ID of the block receiving the data),\n          \"dataType\": string (describe the data flowing, based on step inputs/outputs),\n          \"updateRules\": string (default to \"onSourceChange\" for direct data flow, or \"manual\")\n        }\n        // ... define connections based on data flow between steps (output of one step is input to another)\n      ]\n    }\n\n    Intent Guidelines (Choose ONE per block):
+    - '${BlockIntent.EDIT}': Modifying existing content (text, data, images, settings).
+    - '${BlockIntent.VIEW}': Primarily observing or reading information.
+    - '${BlockIntent.SEARCH}': Actively looking for specific information within an application or the web.
+    - '${BlockIntent.GENERATE}': Creating substantially new content, potentially using AI assistance or complex tools.
+    - '${BlockIntent.INPUT}': Manually entering data into specific fields or forms.
+    - '${BlockIntent.EXTRACT}': Copying or isolating specific pieces of data from a larger source.
+    - '${BlockIntent.TRANSFER}': Moving data between applications or locations (e.g., copy/paste, download/upload, export/import).
+    - '${BlockIntent.DECISION}': If the step represents a clear conditional branch point (less common).
+    - '${BlockIntent.COMMUNICATE}': If the primary action is sending information (e.g., composing/sending email).
+    - '${BlockIntent.UNKNOWN}': Use ONLY if the intent is genuinely ambiguous or cannot be determined from the context.
+
+    Instructions:
+    1.  Create one or more blocks for each step in the 'organizedWorkflow.steps' array.
+    2.  **Critically analyze** the step's 'action', context, and 'primaryApplication' to determine the most accurate 'intent' from the provided list. Assign this value to the 'intent' field.
+    3.  Handle the 'applicationName' and 'title' fields as previously instructed (copying 'primaryApplication' and formatting the title).
+    4.  Generate unique and descriptive 'id' values for all blocks and sources.
+    5.  Derive 'sources' from the unique input sources identified in the workflow steps.
+    6.  Create 'connections' representing the data flow described by the input/output fields between steps/blocks.
+    7.  Maintain all previously established requirements for generating descriptions, properties, sources, and connections accurately.
+    8.  Ensure the final output is a single, valid JSON object conforming exactly to the specified structure, using the correct enum values for 'intent'.\n    `;
+
     try {
       const response = await this.anthropicClient.messages.create({
         model: "claude-3-7-sonnet-20250219", // the newest Anthropic model is "claude-3-7-sonnet-20250219" which was released February 24, 2025
@@ -488,16 +463,18 @@ export class AIService {
       const responseText = this.extractTextFromResponse(response.content);
       
       // Parse the response using the helper method
-      // Note: Validation of enums happens after parsing
       const parsedStructure = this._parseJsonResponse<any>(responseText, 'generateBlockStructure');
       
-      // Ensure block types are valid enum values
+      // Ensure block intents are valid enum values
       parsedStructure.blocks = parsedStructure.blocks.map((block: any) => {
-        // Convert type string to enum
-        const validTypes = Object.values(BlockType);
-        if (!validTypes.includes(block.type)) {
-          // Default to document if invalid
-          block.type = BlockType.Document;
+        const validIntents = Object.values(BlockIntent);
+        if (!validIntents.includes(block.intent)) {
+          console.warn(`Invalid BlockIntent '${block.intent}' received for block ID '${block.id}'. Defaulting to UNKNOWN.`);
+          block.intent = BlockIntent.UNKNOWN; // Default to unknown if invalid
+        }
+        // Ensure applicationName is either a string or excluded (handle null from LLM)
+        if (block.applicationName === null) {
+           delete block.applicationName; // Remove the key if null
         }
         return block;
       });

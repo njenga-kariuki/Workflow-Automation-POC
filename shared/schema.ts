@@ -46,12 +46,18 @@ export type InsertWorkflow = z.infer<typeof insertWorkflowSchema>;
 export type UpdateWorkflow = z.infer<typeof updateWorkflowSchema>;
 export type Workflow = typeof workflows.$inferSelect;
 
-// Block Types
-export enum BlockType {
-  Document = "document",
-  Presentation = "presentation",
-  Interface = "interface",
-  Data = "data"
+// Define the new action-focused enum
+export enum BlockIntent {
+  EDIT = "edit",         // Modifying existing content (docs, data, settings)
+  VIEW = "view",         // Reading, reviewing, observing content without changes
+  SEARCH = "search",       // Querying, finding information (web, database, files)
+  GENERATE = "generate",   // Creating new content/data, often with assistance (e.g., LLM)
+  INPUT = "input",        // Entering new data manually (forms, fields)
+  EXTRACT = "extract",     // Pulling specific data out from a source
+  TRANSFER = "transfer",   // Moving data between locations/applications (copy/paste, export/import)
+  DECISION = "decision",   // Representing a conditional branch point in the workflow
+  COMMUNICATE = "communicate", // Sending information (email, message)
+  UNKNOWN = "unknown"      // Fallback for unclear intent
 }
 
 // Source Types
@@ -70,14 +76,17 @@ export enum UpdateRule {
   OnEvent = "onEvent"
 }
 
-// Block Structure Types
-export type Block = {
+export interface Block {
   id: string;
-  type: BlockType;
+  intent: BlockIntent;
   title: string;
   description: string;
-  properties: Record<string, unknown>;
-};
+  properties: { 
+    updateRules?: UpdateRule; 
+    [key: string]: any; // Allow other properties if needed
+  };
+  applicationName?: string;
+}
 
 export type Source = {
   id: string;

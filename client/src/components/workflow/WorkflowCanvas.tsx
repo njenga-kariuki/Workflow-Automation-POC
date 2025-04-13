@@ -17,54 +17,108 @@ import ReactFlow, {
   Position
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { Block, BlockType, Connection } from "@shared/schema";
+import { Block, BlockIntent, Connection } from "@shared/schema";
 import { cn } from "@/lib/utils";
-import { FileText, Database, Presentation, Layout } from "lucide-react";
+import { 
+  FileText, 
+  Database, 
+  Presentation, 
+  Layout, 
+  Edit, 
+  Search, 
+  Bot, 
+  ArrowRightLeft, 
+  MessageSquare,
+  MousePointer,
+  Eye,
+  DownloadCloud,
+  AlertTriangle,
+  HelpCircle
+} from "lucide-react";
 
 // Define custom node component
 const CustomBlockNode = ({ data }: NodeProps<Block>) => {
+  // Function to get styles based on BlockIntent
   const getBlockStyles = () => {
-    switch (data.type) {
-      case BlockType.Document:
-        return {
-          bg: "bg-gray-50",
-          border: "border-gray-300",
-          icon: <FileText className="h-4 w-4 text-green-600" />,
-          iconBg: "bg-green-100"
-        };
-      case BlockType.Data:
+    switch (data.intent) { 
+      case BlockIntent.EDIT:
         return {
           bg: "bg-blue-50",
           border: "border-blue-200",
-          icon: <Database className="h-4 w-4 text-blue-600" />,
+          icon: <Edit className="h-4 w-4 text-blue-600" />,
           iconBg: "bg-blue-100"
         };
-      case BlockType.Presentation:
+      case BlockIntent.VIEW:
         return {
-          bg: "bg-purple-50",
-          border: "border-purple-200",
-          icon: <Presentation className="h-4 w-4 text-purple-600" />,
-          iconBg: "bg-purple-100"
+          bg: "bg-gray-50",
+          border: "border-gray-300",
+          icon: <Eye className="h-4 w-4 text-gray-600" />,
+          iconBg: "bg-gray-100"
         };
-      case BlockType.Interface:
+      case BlockIntent.SEARCH:
         return {
           bg: "bg-yellow-50",
           border: "border-yellow-200",
-          icon: <Layout className="h-4 w-4 text-yellow-600" />,
+          icon: <Search className="h-4 w-4 text-yellow-600" />,
           iconBg: "bg-yellow-100"
         };
+      case BlockIntent.GENERATE:
+        return {
+          bg: "bg-purple-50",
+          border: "border-purple-200",
+          icon: <Bot className="h-4 w-4 text-purple-600" />,
+          iconBg: "bg-purple-100"
+        };
+      case BlockIntent.INPUT:
+        return {
+          bg: "bg-green-50",
+          border: "border-green-200",
+          icon: <MousePointer className="h-4 w-4 text-green-600" />,
+          iconBg: "bg-green-100"
+        };
+      case BlockIntent.EXTRACT:
+          return {
+            bg: "bg-indigo-50",
+            border: "border-indigo-200",
+            icon: <DownloadCloud className="h-4 w-4 text-indigo-600" />,
+            iconBg: "bg-indigo-100"
+          };
+      case BlockIntent.TRANSFER:
+        return {
+          bg: "bg-teal-50",
+          border: "border-teal-200",
+          icon: <ArrowRightLeft className="h-4 w-4 text-teal-600" />,
+          iconBg: "bg-teal-100"
+        };
+      case BlockIntent.DECISION:
+          return {
+            bg: "bg-orange-50",
+            border: "border-orange-200",
+            icon: <AlertTriangle className="h-4 w-4 text-orange-600" />,
+            iconBg: "bg-orange-100"
+          };
+      case BlockIntent.COMMUNICATE:
+        return {
+          bg: "bg-pink-50",
+          border: "border-pink-200",
+          icon: <MessageSquare className="h-4 w-4 text-pink-600" />,
+          iconBg: "bg-pink-100"
+        };
+      case BlockIntent.UNKNOWN:
       default:
         return {
           bg: "bg-gray-50",
           border: "border-gray-300",
-          icon: <FileText className="h-4 w-4 text-gray-600" />,
+          icon: <HelpCircle className="h-4 w-4 text-gray-600" />,
           iconBg: "bg-gray-100"
         };
     }
   };
   
+  // Call the function to get styles
   const styles = getBlockStyles();
   
+  // Return the JSX structure for the node
   return (
     <div className={cn(
       styles.bg, 
@@ -75,7 +129,7 @@ const CustomBlockNode = ({ data }: NodeProps<Block>) => {
       <Handle type="source" position={Position.Right} className="!bg-gray-400" />
       
       <div className="flex items-center mb-2">
-        <div className={`h-6 w-6 rounded-full ${styles.iconBg} flex items-center justify-center`}>
+        <div className={cn("h-6 w-6 rounded-full flex items-center justify-center", styles.iconBg)}>
           {styles.icon}
         </div>
         <h3 className="ml-2 font-medium text-gray-900">{data.title}</h3>

@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Block, BlockType, UpdateRule } from "@shared/schema";
+import { Block, BlockIntent, UpdateRule } from "@shared/schema";
 
 interface PropertiesPanelProps {
   selectedBlock: Block | null;
@@ -58,19 +58,20 @@ export const PropertiesPanel = ({ selectedBlock, onUpdateBlock }: PropertiesPane
       
       <div className="space-y-4">
         <div>
-          <Label htmlFor="block-type">Block Type</Label>
+          <Label htmlFor="block-intent">Block Intent</Label>
           <Select
-            value={blockData.type}
-            onValueChange={(value) => handleChange('type', value as BlockType)}
+            value={blockData.intent}
+            onValueChange={(value) => handleChange('intent', value as BlockIntent)}
           >
-            <SelectTrigger id="block-type">
-              <SelectValue placeholder="Select block type" />
+            <SelectTrigger id="block-intent">
+              <SelectValue placeholder="Select block intent" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={BlockType.Data}>Data Block</SelectItem>
-              <SelectItem value={BlockType.Document}>Document Block</SelectItem>
-              <SelectItem value={BlockType.Presentation}>Presentation Block</SelectItem>
-              <SelectItem value={BlockType.Interface}>Interface Block</SelectItem>
+              {Object.values(BlockIntent).map((intentValue) => (
+                <SelectItem key={intentValue} value={intentValue}>
+                  {intentValue.charAt(0).toUpperCase() + intentValue.slice(1)}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -93,55 +94,6 @@ export const PropertiesPanel = ({ selectedBlock, onUpdateBlock }: PropertiesPane
             onChange={(e) => handleChange('description', e.target.value)}
           />
         </div>
-        
-        {/* Dynamic properties based on block type */}
-        {blockData.type === BlockType.Data && (
-          <>
-            <div>
-              <Label htmlFor="block-functions">Functions</Label>
-              <Input
-                id="block-functions"
-                value={Array.isArray(blockData.properties.functions) 
-                  ? blockData.properties.functions.join(', ') 
-                  : blockData.properties.functions || ''}
-                onChange={(e) => handlePropertyChange('functions', e.target.value.split(', '))}
-              />
-            </div>
-          </>
-        )}
-        
-        {blockData.type === BlockType.Document && (
-          <div>
-            <Label htmlFor="block-format">Format</Label>
-            <Input
-              id="block-format"
-              value={blockData.properties.format as string || ''}
-              onChange={(e) => handlePropertyChange('format', e.target.value)}
-            />
-          </div>
-        )}
-        
-        {blockData.type === BlockType.Presentation && (
-          <div>
-            <Label htmlFor="block-output-type">Output Type</Label>
-            <Input
-              id="block-output-type"
-              value={blockData.properties.outputType as string || ''}
-              onChange={(e) => handlePropertyChange('outputType', e.target.value)}
-            />
-          </div>
-        )}
-        
-        {blockData.type === BlockType.Interface && (
-          <div>
-            <Label htmlFor="block-application">Application</Label>
-            <Input
-              id="block-application"
-              value={blockData.properties.application as string || ''}
-              onChange={(e) => handlePropertyChange('application', e.target.value)}
-            />
-          </div>
-        )}
         
         <div>
           <Label htmlFor="update-rules">Update Rules</Label>
